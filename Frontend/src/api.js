@@ -1,7 +1,29 @@
 import axios from "axios";
 
+const getApiBaseUrl = () => {
+    const configuredUrl = import.meta.env.VITE_API_URL?.trim();
+
+    if (configuredUrl && /^https?:\/\//i.test(configuredUrl)) {
+        return configuredUrl;
+    }
+
+    if (configuredUrl) {
+        console.warn(
+            `Ignoring invalid VITE_API_URL "${configuredUrl}". Expected http:// or https://.`,
+        );
+    }
+
+    const isLocalhost =
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1";
+
+    return isLocalhost
+        ? "http://localhost:5000/api"
+        : "https://api.topcoders.online/api";
+};
+
 const API = axios.create({
-    baseURL: import.meta.env.VITE_API_URL || "http://localhost:5000/api",
+    baseURL: getApiBaseUrl(),
 });
 
 API.interceptors.request.use((req) => {

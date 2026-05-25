@@ -1,28 +1,39 @@
 import express from "express";
-import { execFile, spawn } from "child_process";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { spawn } from "child_process";
 import { v4 as uuid } from "uuid";
 
 const app = express();
 const PORT = process.env.PORT || 5001;
-const APP_DIR = process.env.APP_DIR || process.cwd();
-const TEMP_ROOT = process.env.TEMP_DIR || path.join(APP_DIR, "temp");
-const RUNNER_SCRIPT_PATH =
-    process.env.RUNNER_SCRIPT_PATH || path.join(APP_DIR, "runner.sh");
+const TEMP_ROOT = process.env.TEMP_DIR || path.join(process.cwd(), "temp");
+const EXECUTION_SERVICE_TOKEN = process.env.EXECUTION_SERVICE_TOKEN?.trim();
 
 app.use(express.json({ limit: "256kb" }));
 
-const TIMEOUT = 2000;
+// Wall-clock timeout for code execution (ms).
+// Must be less than the axios timeout in the backend's executionService.js.
+const TIMEOUT = 10000;
+
+const tokensMatch = (receivedToken) => {
+    if (!EXECUTION_SERVICE_TOKEN) return true;
+    if (!receivedToken) return false;
+    const expected = Buffer.from(EXECUTION_SERVICE_TOKEN);
+    const received = Buffer.from(receivedToken);
+    return (
+        expected.length === received.length &&
+        crypto.timingSafeEqual(expected, received)
+    );
+};
 
 app.get("/health", (req, res) => {
-    res.json({
-        ok: true,
-        service: "runner",
-        timestamp: new Date().toISOString(),
-    });
+    res.json({ ok: true, service: "runner", timestamp: new Date().toISOString() });
 });
 
+// Spawn a process directly (no shell wrapper), kill it after TIMEOUT ms.
+// Using spawn + direct kill instead of execFile + shell avoids the
+// "orphan grandchild holds pipe open" problem that causes ECONNABORTED.
 const runProcess = ({ command, args, cwd, input = "" }) =>
     new Promise((resolve) => {
         let stdout = "";
@@ -42,17 +53,12 @@ const runProcess = ({ command, args, cwd, input = "" }) =>
             child.kill("SIGKILL");
         }, TIMEOUT);
 
-        child.stdout.on("data", (chunk) => {
-            stdout += chunk.toString();
-        });
-
-        child.stderr.on("data", (chunk) => {
-            stderr += chunk.toString();
-        });
+        child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+        child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
 
         child.on("error", (err) => {
             clearTimeout(timer);
-            resolve({ stdout, stderr: `${stderr}${err.message}`, code: 1, timedOut });
+            resolve({ stdout, stderr: stderr + err.message, code: 1, timedOut });
         });
 
         child.on("close", (code) => {
@@ -60,191 +66,132 @@ const runProcess = ({ command, args, cwd, input = "" }) =>
             resolve({ stdout, stderr, code, timedOut });
         });
 
-        if (input) {
-            child.stdin.write(input);
-        }
+        if (input) child.stdin.write(input);
         child.stdin.end();
     });
 
-const sendDirectResult = async ({ res, language, jobDir, input, startedAt }) => {
-    let result;
-
+const executeForLanguage = async ({ language, jobDir, input, startedAt }) => {
     if (language === "cpp") {
         const compile = await runProcess({
             command: "g++",
-            args: ["code.cpp", "-o", "main.exe"],
+            args: ["-O2", "code.cpp", "-o", "main"],
             cwd: jobDir,
         });
-
         if (compile.code !== 0) {
-            return res.json({
-                stdout: compile.stdout,
-                stderr: compile.stderr,
-                status: "compilation_error",
-                time: `${Date.now() - startedAt}ms`,
-            });
+            return { stdout: compile.stdout, stderr: compile.stderr, status: "compilation_error", time: `${Date.now() - startedAt}ms` };
         }
-
-        result = await runProcess({
-            command: path.join(jobDir, "main.exe"),
+        const run = await runProcess({
+            command: path.join(jobDir, "main"),
             args: [],
             cwd: jobDir,
             input,
         });
+        return buildResult(run, startedAt);
+
     } else if (language === "java") {
         const compile = await runProcess({
             command: "javac",
-            args: ["Main.java"],
+            args: [
+                "-J-Xms32m", "-J-Xmx256m",
+                "-J-XX:ReservedCodeCacheSize=32m",
+                "-J-XX:MaxMetaspaceSize=64m",
+                "Main.java",
+            ],
             cwd: jobDir,
         });
-
         if (compile.code !== 0) {
-            return res.json({
-                stdout: compile.stdout,
-                stderr: compile.stderr,
-                status: "compilation_error",
-                time: `${Date.now() - startedAt}ms`,
-            });
+            return { stdout: compile.stdout, stderr: compile.stderr, status: "compilation_error", time: `${Date.now() - startedAt}ms` };
         }
-
-        result = await runProcess({
+        const run = await runProcess({
             command: "java",
-            args: ["Main"],
+            args: [
+                "-Xms32m", "-Xmx256m",
+                "-XX:ReservedCodeCacheSize=32m",
+                "-XX:MaxMetaspaceSize=64m",
+                "Main",
+            ],
             cwd: jobDir,
             input,
         });
+        return buildResult(run, startedAt);
+
     } else if (language === "python") {
-        result = await runProcess({
-            command: "python",
+        const run = await runProcess({
+            command: "python3",
             args: ["code.py"],
             cwd: jobDir,
             input,
         });
-    } else {
-        result = await runProcess({
+        return buildResult(run, startedAt);
+
+    } else if (language === "javascript") {
+        const run = await runProcess({
             command: "node",
             args: ["code.js"],
             cwd: jobDir,
             input,
         });
+        return buildResult(run, startedAt);
+
+    } else {
+        return { stdout: "", stderr: "Unsupported language", status: "runtime_error", time: "0ms" };
     }
+};
 
+const buildResult = (run, startedAt) => {
     let status = "success";
-    if (result.timedOut) status = "timeout";
-    else if (result.code !== 0) status = "runtime_error";
-
-    return res.json({
-        stdout: result.stdout,
-        stderr: result.stderr,
-        status,
-        time: `${Date.now() - startedAt}ms`,
-    });
+    if (run.timedOut) status = "timeout";
+    else if (run.code !== 0) status = "runtime_error";
+    return { stdout: run.stdout, stderr: run.stderr, status, time: `${Date.now() - startedAt}ms` };
 };
 
 app.post("/execute", async (req, res) => {
     let jobDir;
 
     try {
+        if (!tokensMatch(req.get("x-execution-service-token"))) {
+            return res.status(401).json({ error: "Unauthorized execution request" });
+        }
+
         const { code, input = "", language } = req.body || {};
         const jobId = req.body?.jobId || uuid();
 
-        if (!language || (!code && !req.body?.jobId)) {
-            return res
-                .status(400)
-                .json({ error: "code and language required" });
+        if (!language || !code) {
+            return res.status(400).json({ error: "code and language required" });
+        }
+
+        const sourceFiles = {
+            cpp:        "code.cpp",
+            python:     "code.py",
+            java:       "Main.java",
+            javascript: "code.js",
+        };
+
+        const sourceFile = sourceFiles[language];
+        if (!sourceFile) {
+            return res.status(400).json({ error: "Unsupported language" });
         }
 
         jobDir = path.join(TEMP_ROOT, jobId);
         fs.mkdirSync(jobDir, { recursive: true });
-        fs.writeFileSync(path.join(jobDir, "input.txt"), input, "utf8");
+        fs.writeFileSync(path.join(jobDir, sourceFile), code, "utf8");
 
-        let runCmd = "";
-        let sourceFile = "";
+        const startedAt = Date.now();
+        const result = await executeForLanguage({ language, jobDir, input, startedAt });
+        return res.json(result);
 
-        switch (language) {
-            case "cpp":
-                runCmd = "g++ code.cpp -o main && ./main";
-                sourceFile = "code.cpp";
-                break;
-            case "python":
-                runCmd = "python3 code.py";
-                sourceFile = "code.py";
-                break;
-            case "java":
-                runCmd =
-                    "javac -J-Xms16m -J-Xmx256m -J-XX:ReservedCodeCacheSize=32m -J-XX:CompressedClassSpaceSize=32m -J-XX:MaxMetaspaceSize=128m Main.java && java -Xms16m -Xmx256m -XX:ReservedCodeCacheSize=32m -XX:CompressedClassSpaceSize=32m -XX:MaxMetaspaceSize=128m Main";
-                sourceFile = "Main.java";
-                break;
-            case "javascript":
-                runCmd = "node code.js";
-                sourceFile = "code.js";
-                break;
-            default:
-                return res.status(400).json({ error: "Unsupported language" });
-        }
-
-        if (code) {
-            fs.writeFileSync(path.join(jobDir, sourceFile), code, "utf8");
-        }
-
-        const start = Date.now();
-
-        if (process.platform === "win32") {
-            try {
-                await sendDirectResult({
-                    res,
-                    language,
-                    jobDir,
-                    input,
-                    startedAt: start,
-                });
-            } finally {
-                fs.rmSync(jobDir, { recursive: true, force: true });
-            }
-            return;
-        }
-
-        execFile(
-            "bash",
-            [RUNNER_SCRIPT_PATH, runCmd],
-            {
-                cwd: jobDir,
-                timeout: TIMEOUT,
-            },
-            (error, stdout, stderr) => {
-                const end = Date.now();
-
-                let status = "success";
-
-                if (error) {
-                    if (error.killed) status = "timeout";
-                    else status = "runtime_error";
-                }
-
-                if (stderr && stderr.toLowerCase().includes("error"))
-                    status = "compilation_error";
-
-                res.json({
-                    stdout,
-                    stderr,
-                    status,
-                    time: end - start + "ms",
-                });
-
-                fs.rmSync(jobDir, { recursive: true, force: true });
-            },
-        );
     } catch (err) {
-        console.error(err.message);
-        if (jobDir && fs.existsSync(jobDir)) {
-            fs.rmSync(jobDir, { recursive: true, force: true });
+        console.error("Execute error:", err.message);
+        return res.status(500).json({ error: "Execution failed" });
+    } finally {
+        if (jobDir) {
+            try { fs.rmSync(jobDir, { recursive: true, force: true }); } catch (_) {}
         }
-        res.status(500).json({ error: "Execution failed" });
     }
 });
 
 const server = app.listen(PORT, () =>
-    console.log(`Execution service running on ${PORT}`),
+    console.log(`Execution service running on ${PORT}`)
 );
 
 server.on("error", (err) => {
@@ -253,12 +200,9 @@ server.on("error", (err) => {
 });
 
 const shutdown = (signal) => {
-    console.log(`Received ${signal}. Shutting down execution service...`);
-    server.close(() => {
-        console.log("Execution service closed");
-        process.exit(0);
-    });
+    console.log(`Received ${signal}. Shutting down...`);
+    server.close(() => process.exit(0));
 };
 
-process.once("SIGINT", () => shutdown("SIGINT"));
+process.once("SIGINT",  () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));

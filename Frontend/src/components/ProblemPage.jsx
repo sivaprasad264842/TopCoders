@@ -151,7 +151,17 @@ function ProblemPage() {
 
         try {
             const res = await runCode({ code, language, input });
-            setOutput(res.data.stdout || res.data.stderr || "No output");
+            const { stdout, stderr, status } = res.data;
+            if (status === "compilation_error") {
+                setOutput("[Compilation Error]\n" + (stderr || stdout || "Unknown error"));
+            } else if (status === "timeout") {
+                setOutput("[Time Limit Exceeded]\n" + (stdout || ""));
+            } else if (status === "runtime_error") {
+                const body = [stdout, stderr].filter(Boolean).join("\n");
+                setOutput("[Runtime Error]\n" + (body || "Unknown runtime error"));
+            } else {
+                setOutput(stdout || stderr || "No output");
+            }
         } catch (err) {
             console.error(err);
             const message =

@@ -1,9 +1,10 @@
 import axios from "axios";
 
 const EXECUTION_SERVICE_URL =
-    process.env.EXECUTION_SERVICE_URL || "http://127.0.0.1:5001/execute";
+    process.env.EXECUTION_SERVICE_URL;
+const EXECUTION_SERVICE_TOKEN = process.env.EXECUTION_SERVICE_TOKEN?.trim();
 
-const dockerExecutionError = (message) => ({
+const executionError = (message) => ({
     stdout: "",
     stderr: message,
     status: "runtime_error",
@@ -13,14 +14,19 @@ const dockerExecutionError = (message) => ({
 export const executeCode = async (payload) => {
     if (EXECUTION_SERVICE_URL.includes(":5000/")) {
         const message =
-            "Execution service URL points to the backend server. Start the Docker execution service on port 5001.";
+            "EXECUTION_SERVICE_URL points to the backend server itself. Set it to the runner service URL (port 5001).";
         console.error("EXECUTION ERROR:", message);
-        return dockerExecutionError(message);
+        return executionError(message);
     }
 
     try {
+        const headers = EXECUTION_SERVICE_TOKEN
+            ? { "x-execution-service-token": EXECUTION_SERVICE_TOKEN }
+            : {};
+
         const res = await axios.post(EXECUTION_SERVICE_URL, payload, {
-            timeout: 8000,
+            headers,
+            timeout: 15000,
         });
 
         const missingRunnerScript =
@@ -29,9 +35,9 @@ export const executeCode = async (payload) => {
 
         if (missingRunnerScript) {
             const message =
-                "Docker execution service is misconfigured: runner script not found.";
+                "Execution service is misconfigured: runner script not found inside the container.";
             console.error("EXECUTION ERROR:", message);
-            return dockerExecutionError(message);
+            return executionError(message);
         }
 
         return res.data;
@@ -42,11 +48,11 @@ export const executeCode = async (payload) => {
             err.message ||
             "Unknown execution service error";
 
-        const message = `Docker execution service failed: ${serviceError}`;
+        const message = `Execution service failed: ${serviceError}`;
         console.error("EXECUTION ERROR:", message);
 
-        return dockerExecutionError(
-            `${message}. Start it with Docker and make sure EXECUTION_SERVICE_URL points to http://127.0.0.1:5001/execute.`,
+        return executionError(
+            `${message}. Check EXECUTION_SERVICE_URL and make sure the runner container is running.`,
         );
     }
 };

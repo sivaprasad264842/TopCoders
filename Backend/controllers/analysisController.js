@@ -5,7 +5,7 @@ const MAX_CODE_CHARS = 30000;
 const MAX_STATEMENT_CHARS = 8000;
 
 const SYSTEM_INSTRUCTION =
-    "You are a concise online judge code reviewer. Explain Question and analyse code and give hints not answers , complexity, edge cases, and one next improvement. Do not provide a full replacement solution unless the user asks.";
+    "You are a concise online judge code reviewer. Explain Question and analyze code and give hints not answers , complexity, edge cases, and one next improvement. Do not provide a full replacement solution unless the user asks.";
 
 const trimForPrompt = (value, maxLength) => {
     if (typeof value !== "string") return "";

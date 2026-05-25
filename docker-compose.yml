@@ -10,7 +10,10 @@ services:
       - MONGO_URI=${MONGO_URI}
       - JWT_SECRET=${JWT_SECRET}
       - CLIENT_URL=${CLIENT_URL}
+      - EMAIL_USER=${EMAIL_USER}
+      - EMAIL_PASS=${EMAIL_PASS}
       - EXECUTION_SERVICE_URL=http://runner:5001/execute
+      - EXECUTION_SERVICE_TOKEN=${EXECUTION_SERVICE_TOKEN}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
     depends_on:
@@ -20,12 +23,13 @@ services:
     build:
       context: ./container
     ports:
-      - "5001:5001"
+      - "127.0.0.1:5001:5001"
     environment:
       - NODE_ENV=production
       - PORT=5001
       - TEMP_DIR=/tmp/oj-jobs
-    # This container runs untrusted code. Do NOT deploy without limits.
+      - EXECUTION_SERVICE_TOKEN=${EXECUTION_SERVICE_TOKEN}
+    # This container runs untrusted code. Resource limits are mandatory.
     deploy:
       resources:
         limits:

@@ -1,0 +1,90 @@
+{
+  "family": "topcoders",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "3072",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "backend",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/topcoders:backend",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 5000,
+          "protocol": "tcp",
+          "appProtocol": "http"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV",               "value": "production" },
+        { "name": "PORT",                   "value": "5000" },
+        { "name": "EXECUTION_SERVICE_URL",  "value": "http://127.0.0.1:5001/execute" },
+        { "name": "CLIENT_URL",             "value": "CLIENT_URL_PLACEHOLDER" },
+        { "name": "OPENAI_MODEL",           "value": "gpt-4o-mini" }
+      ],
+      "secrets": [
+        { "name": "MONGO_URI",               "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/topcoders/MONGO_URI" },
+        { "name": "JWT_SECRET",              "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/topcoders/JWT_SECRET" },
+        { "name": "EMAIL_USER",              "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/topcoders/EMAIL_USER" },
+        { "name": "EMAIL_PASS",              "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/topcoders/EMAIL_PASS" },
+        { "name": "OPENAI_API_KEY",          "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/topcoders/OPENAI_API_KEY" },
+        { "name": "EXECUTION_SERVICE_TOKEN", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/topcoders/EXECUTION_SERVICE_TOKEN" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group":         "/ecs/topcoders",
+          "awslogs-region":        "REGION",
+          "awslogs-stream-prefix": "backend"
+        }
+      },
+      "healthCheck": {
+        "command":     ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""],
+        "interval":    30,
+        "timeout":     5,
+        "retries":     3,
+        "startPeriod": 20
+      }
+    },
+    {
+      "name": "runner",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/topcoders:container",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 5001,
+          "protocol": "tcp",
+          "appProtocol": "http"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV",  "value": "production" },
+        { "name": "PORT",      "value": "5001" },
+        { "name": "TEMP_DIR",  "value": "/tmp/oj-jobs" }
+      ],
+      "secrets": [
+        { "name": "EXECUTION_SERVICE_TOKEN", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/topcoders/EXECUTION_SERVICE_TOKEN" }
+      ],
+      "linuxParameters": {
+        "initProcessEnabled": true
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group":         "/ecs/topcoders",
+          "awslogs-region":        "REGION",
+          "awslogs-stream-prefix": "runner"
+        }
+      },
+      "healthCheck": {
+        "command":     ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""],
+        "interval":    30,
+        "timeout":     5,
+        "retries":     3,
+        "startPeriod": 20
+      }
+    }
+  ]
+}
