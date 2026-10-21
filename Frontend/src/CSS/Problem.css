@@ -16,6 +16,13 @@
     place-items: center;
 }
 
+.load-error {
+    display: grid;
+    gap: 14px;
+    justify-items: center;
+    text-align: center;
+}
+
 .problem-shell {
     min-height: 100vh;
     display: grid;
@@ -957,4 +964,86 @@ pre {
     .modal-actions button {
         width: 100%;
     }
+}
+
+/* ── On-demand sandbox status ─────────────────────────────────────────── */
+.runner-status {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    background: #f3f4f6;
+    color: #4b5563;
+}
+
+.runner-status::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.runner-status.ready {
+    background: #dcfce7;
+    color: #15803d;
+}
+
+.runner-status.starting {
+    background: #fef3c7;
+    color: #b45309;
+}
+
+.runner-status.starting::before {
+    animation: runner-pulse 1s ease-in-out infinite;
+}
+
+.runner-status.error {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+@keyframes runner-pulse {
+    50% {
+        opacity: 0.25;
+    }
+}
+
+/* ── Hidden test cases ────────────────────────────────────────────────── */
+.hidden-badge {
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
+.hidden-note,
+.form-help {
+    margin: 4px 0 12px;
+    font-size: 13px;
+    color: #6b7280;
+}
+
+.hidden-toggle {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.hidden-toggle input {
+    width: auto;
+    margin: 0;
 }

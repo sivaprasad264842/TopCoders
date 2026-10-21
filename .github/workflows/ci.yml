@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend unit + API tests
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: Backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: Backend/package-lock.json }
+      - run: npm ci
+      - run: npm test
+
+  runner:
+    name: Runner unit tests
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: container } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: container/package-lock.json }
+      - run: npm ci
+      - run: npm test
+
+  frontend:
+    name: Frontend lint + build
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: Frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: Frontend/package-lock.json }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  e2e:
+    name: End-to-end (MongoDB + real runner container)
+    runs-on: ubuntu-latest
+    needs: [backend, runner]
+    services:
+      mongo:
+        image: mongo:7
+        ports: ["27017:27017"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: Backend/package-lock.json }
+      - name: Build and start the runner
+        run: |
+          docker build -t topcoders-runner container
+          docker run -d --init --name runner -p 5001:5001 --cpus=1 --memory=1g --pids-limit=256 \
+            -e EXECUTION_SERVICE_TOKEN=ci-token topcoders-runner
+          for i in $(seq 1 30); do curl -fs http://localhost:5001/health && break; sleep 1; done
+      - name: Runner smoke test (all languages, limits, sandbox)
+        working-directory: container
+        run: node test/smoke.mjs
+        env: { RUNNER_URL: "http://localhost:5001", RUNNER_TOKEN: ci-token }
+      - name: Full-stack API tests
+        working-directory: Backend
+        run: npm ci && npm test
+        env:
+          E2E_MONGO_URI: mongodb://localhost:27017/tc-e2e
+          RUNNER_URL: http://localhost:5001
+          EXECUTION_SERVICE_TOKEN: ci-token
+      - name: Runner logs on failure
+        if: failure()
+        run: docker logs runner

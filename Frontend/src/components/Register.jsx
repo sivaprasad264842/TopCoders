@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import API from "../api";
+import API, { getErrorMessage } from "../api";
 import "../CSS/Register.css";
 
 function Register() {
@@ -38,9 +38,8 @@ function Register() {
                 password,
             });
 
-            // 🔥 FIX: backend sends "msg", not "message"
             setMessage({
-                text: res.data.msg || "Verification email sent",
+                text: res.data.message || "Verification email sent",
                 type: "success",
             });
 
@@ -50,12 +49,10 @@ function Register() {
             setPassword("");
             setConfirmPassword("");
         } catch (err) {
-            const errorMsg =
-                err.response?.data?.msg || // 🔥 FIX HERE
-                err.message ||
-                "Registration failed. Please try again.";
-
-            setMessage({ text: errorMsg, type: "error" });
+            setMessage({
+                text: getErrorMessage(err, "Registration failed. Please try again."),
+                type: "error",
+            });
         } finally {
             setLoading(false);
         }

@@ -1,143 +1,114 @@
+import { randomUUID } from "node:crypto";
 import Problem from "../models/Problem.js";
-import { v4 as uuidv4 } from "uuid";
+import { HttpError } from "../utils/httpError.js";
+import { LIMITS, parseHints, parseTestCases } from "../utils/validation.js";
 
-//-------------------------------------------------------------------------------------------------------------------------------------------------------------//
+const DIFFICULTIES = ["Easy", "Medium", "Hard"];
+
+/**
+ * What a viewer may see. Authors get every test case; everyone else only
+ * the visible (sample) ones, plus a count of the hidden ones.
+ */
+const toPublicProblem = (problem, viewerId) => {
+    const isAuthor = Boolean(viewerId) && String(problem.createdBy) === String(viewerId);
+    const all = (problem.testCases || []).map(({ input, output, hidden }) => ({
+        input,
+        output,
+        hidden: Boolean(hidden),
+    }));
+    const visible = all.filter((tc) => !tc.hidden);
+
+    return {
+        _id: problem._id,
+        problemId: problem.problemId,
+        title: problem.title,
+        statement: problem.statement,
+        difficulty: problem.difficulty,
+        createdBy: problem.createdBy,
+        createdAt: problem.createdAt,
+        hints: problem.hints || [],
+        testCases: isAuthor ? all : visible,
+        testCaseCount: all.length,
+        hiddenTestCount: all.length - visible.length,
+    };
+};
+
+const readProblemFields = (body, { partial }) => {
+    const { title, statement, difficulty, testCases, hints } = body || {};
+    const fields = {};
+
+    if (typeof title === "string" || !partial) {
+        fields.title = String(title || "").trim();
+        if (!fields.title || fields.title.length > LIMITS.titleChars) {
+            throw new HttpError(400, `Title is required (max ${LIMITS.titleChars} characters).`);
+        }
+    }
+    if (typeof statement === "string" || !partial) {
+        fields.statement = String(statement || "").trim();
+        if (!fields.statement || fields.statement.length > LIMITS.statementChars) {
+            throw new HttpError(400, "Statement is required (max 20,000 characters).");
+        }
+    }
+    if (DIFFICULTIES.includes(difficulty)) fields.difficulty = difficulty;
+    else if (!partial) fields.difficulty = "Easy";
+
+    if (testCases !== undefined || !partial) fields.testCases = parseTestCases(testCases ?? []);
+    if (hints !== undefined || !partial) fields.hints = parseHints(hints);
+
+    return fields;
+};
 
 export const createProblem = async (req, res) => {
-    try {
-        const { title, statement, difficulty, testCases, hints } = req.body;
-        if (!title || !statement) {
-            return res
-                .status(400)
-                .json({ message: "Title and statement required" });
-        }
+    const problem = await Problem.create({
+        ...readProblemFields(req.body, { partial: false }),
+        problemId: randomUUID(),
+        createdBy: req.user._id,
+    });
 
-        const newProblem = new Problem({
-            title,
-            statement,
-            difficulty: ["Easy", "Medium", "Hard"].includes(difficulty)
-                ? difficulty
-                : "Easy",
-            problemId: uuidv4(),
-            createdBy: req.user._id,
-            testCases: testCases || [],
-            hints: Array.isArray(hints)
-                ? hints.map((hint, index) => ({
-                      title: String(hint.title || `Hint ${index + 1}`).trim(),
-                      body: String(hint.body || "").trim(),
-                  }))
-                : [],
-        });
-
-        await newProblem.save();
-        res.status(201).json(newProblem);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: err.message });
-    }
+    res.status(201).json(toPublicProblem(problem.toObject(), req.user._id));
 };
 
-//-------------------------------------------------------------------------------------------------------------------------------------------------------------//
-
+/** List view: no test case bodies (they can be large), just counts. */
 export const getAllProblems = async (req, res) => {
-    try {
-        const problems = await Problem.find()
-            .populate("createdBy", "_id")
-            .sort({ createdAt: 1 });
-        res.json(problems);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Failed to fetch problems" });
-    }
-};
+    const problems = await Problem.aggregate([
+        { $sort: { createdAt: 1 } },
+        {
+            $project: {
+                problemId: 1,
+                title: 1,
+                statement: 1,
+                difficulty: 1,
+                createdBy: 1,
+                createdAt: 1,
+                testCaseCount: { $size: { $ifNull: ["$testCases", []] } },
+            },
+        },
+    ]);
 
-//-------------------------------------------------------------------------------------------------------------------------------------------------------------//
+    res.json(problems);
+};
 
 export const getProblemById = async (req, res) => {
-    try {
-        const problem = await Problem.findOne({
-            problemId: req.params.id,
-        }).populate("createdBy", "_id");
-
-        if (!problem) {
-            return res.status(404).json({ message: "Problem not found" });
-        }
-
-        res.json(problem);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Failed to fetch problem" });
+    const problem = await Problem.findOne({ problemId: req.params.id }).lean();
+    if (!problem) {
+        return res.status(404).json({ error: "Problem not found" });
     }
+
+    res.json(toPublicProblem(problem, req.userId));
 };
 
-//-------------------------------------------------------------------------------------------------------------------------------------------------------------//
-
+// isOwner middleware has already loaded req.problem and checked authorship.
 export const updateProblem = async (req, res) => {
-    try {
-        const problem = await Problem.findOne({ problemId: req.params.id });
+    const updated = await Problem.findOneAndUpdate(
+        { problemId: req.problem.problemId },
+        readProblemFields(req.body, { partial: true }),
+        { returnDocument: "after", runValidators: true },
+    ).lean();
 
-        if (!problem) {
-            return res.status(404).json({ message: "Problem not found" });
-        }
-
-        if (problem.createdBy.toString() !== req.user._id.toString()) {
-            return res.status(403).json({ message: "Not authorized" });
-        }
-
-        const { title, statement, difficulty, testCases, hints } = req.body;
-        const update = {};
-
-        if (typeof title === "string") update.title = title.trim();
-        if (typeof statement === "string") update.statement = statement.trim();
-        if (["Easy", "Medium", "Hard"].includes(difficulty)) {
-            update.difficulty = difficulty;
-        }
-        if (Array.isArray(testCases)) {
-            update.testCases = testCases.map((tc) => ({
-                input: String(tc.input || ""),
-                output: String(tc.output || ""),
-            }));
-        }
-        if (Array.isArray(hints)) {
-            update.hints = hints.map((hint, index) => ({
-                title: String(hint.title || `Hint ${index + 1}`).trim(),
-                body: String(hint.body || "").trim(),
-            }));
-        }
-
-        const updated = await Problem.findOneAndUpdate(
-            { problemId: req.params.id },
-            update,
-            { new: true, runValidators: true },
-        );
-
-        res.json(updated);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: err.message });
-    }
+    res.json(toPublicProblem(updated, req.user._id));
 };
-
-
-//-------------------------------------------------------------------------------------------------------------------------------------------------------------//
 
 export const deleteProblem = async (req, res) => {
-    try {
-        const problem = await Problem.findOne({ problemId: req.params.id });
-
-        if (!problem) {
-            return res.status(404).json({ message: "Problem not found" });
-        }
-
-        if (problem.createdBy.toString() !== req.user._id.toString()) {
-            return res.status(403).json({ message: "Not authorized" });
-        }
-
-        await Problem.findOneAndDelete({ problemId: req.params.id });
-
-        res.json({ message: "Deleted" });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: err.message });
-    }
+    await Problem.deleteOne({ problemId: req.problem.problemId });
+    res.json({ message: "Deleted" });
 };

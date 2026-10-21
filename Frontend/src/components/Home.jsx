@@ -1,14 +1,17 @@
 import { useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+    clearAuth,
+    endRunnerSession,
     getCurrentUser,
+    getErrorMessage,
     getLeaderboard,
     getMySubmissions,
     getProblems,
     updateCurrentUser,
 } from "../api";
-import CreateProblemModal from "./CreateProblemModal";
 import ProblemCard from "./ProblemCard";
+import ProblemFormModal from "./ProblemFormModal";
 import "../CSS/Home.css";
 
 function Home() {
@@ -91,9 +94,8 @@ function Home() {
     }, []);
 
     const handleLogout = () => {
-        localStorage.removeItem("token");
-        localStorage.removeItem("userId");
-        localStorage.removeItem("email");
+        endRunnerSession({ immediate: true }); // stop the paid sandbox right away
+        clearAuth();
         setProfile(null);
         setProfileOpen(false);
     };
@@ -188,10 +190,7 @@ function Home() {
             setProfileEditing(false);
             setShowPictureUrl(false);
         } catch (err) {
-            console.error(err);
-            setProfileError(
-                err.response?.data?.msg || "Could not save profile changes.",
-            );
+            setProfileError(getErrorMessage(err, "Could not save profile changes."));
         } finally {
             setProfileSaving(false);
         }
@@ -284,7 +283,7 @@ function Home() {
             </section>
 
             {showModal && (
-                <CreateProblemModal
+                <ProblemFormModal
                     close={() => setShowModal(false)}
                     refresh={fetchProblems}
                 />
@@ -537,7 +536,7 @@ function Home() {
                                         />
                                     </label>
                                     <label>
-                                        Phone number
+                                        Phone number (private, only you see it)
                                         <input
                                             value={profileForm.phone}
                                             onChange={(e) =>
@@ -689,20 +688,14 @@ function Home() {
                                                     alt=""
                                                 />
                                             ) : (
-                                                (
-                                                    user.username ||
-                                                    user.email ||
-                                                    "U"
-                                                )
+                                                (user.username || "U")
                                                     .charAt(0)
                                                     .toUpperCase()
                                             )}
                                         </span>
                                         <span className="leaderboard-user">
-                                            <strong>
-                                                {user.username || user.email}
-                                            </strong>
-                                            <small>{user.bio || user.email}</small>
+                                            <strong>{user.username}</strong>
+                                            <small>{user.bio || "Ready to solve."}</small>
                                         </span>
                                         <strong>{user.solvedCount}</strong>
                                     </article>

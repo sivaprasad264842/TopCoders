@@ -1,34 +1,30 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import API from "../api";
 
 function Verify() {
     const { token } = useParams();
     const navigate = useNavigate();
+    // The link is single-use; make sure we only spend it once
+    // (React StrictMode runs effects twice in development).
+    const requestedRef = useRef(false);
 
     useEffect(() => {
-        const verifyEmail = async () => {
-            try {
-                await API.get(`/auth/verify/${token}`);
+        if (requestedRef.current) return;
+        requestedRef.current = true;
 
-                
-                navigate("/login?verified=true");
-            } catch (err) {
-                const errorMsg = err.response?.data?.msg;
-
-                
-                if (errorMsg === "Already verified") {
-                    navigate("/login?already=true");
-                } else {
-                    navigate("/login?error=verification_failed");
-                }
-            }
-        };
-
-        verifyEmail();
+        API.get(`/auth/verify/${token}`)
+            .then(() => navigate("/login?verified=true", { replace: true }))
+            .catch((err) => {
+                const code = err.response?.data?.code;
+                navigate(
+                    code === "ALREADY_VERIFIED" ? "/login?already=true" : "/login?error=verification_failed",
+                    { replace: true },
+                );
+            });
     }, [token, navigate]);
 
-    return <h2>Verifying your email...</h2>;
+    return <h2 style={{ textAlign: "center", marginTop: "20vh" }}>Verifying your email...</h2>;
 }
 
 export default Verify;

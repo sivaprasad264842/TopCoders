@@ -1,21 +1,22 @@
 {
-    "name": "container",
-    "version": "1.0.0",
+    "name": "topcoders-runner",
+    "version": "2.0.0",
+    "private": true,
     "type": "module",
     "main": "server.js",
+    "description": "Sandboxed code execution service for TopCoders (C++, Java, Python, JavaScript).",
     "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1",
         "start": "node server.js",
-        "docker:build": "docker.exe build -t oj-execution-service .",
-        "docker:run": "docker.exe run --rm --name oj-execution-service -p 5001:5001 --cpus=1 --memory=1g --pids-limit=128 oj-execution-service"
+        "test": "node --test test/unit.test.js",
+        "test:docker": "node test/smoke.mjs",
+        "docker:build": "docker build -t topcoders-runner .",
+        "docker:run": "docker run --rm --init --name topcoders-runner -p 5001:5001 --cpus=1 --memory=1g --pids-limit=256 -e EXECUTION_SERVICE_TOKEN=local-dev-token topcoders-runner"
     },
-    "keywords": [],
-    "author": "",
+    "engines": {
+        "node": ">=22"
+    },
     "license": "ISC",
-    "description": "",
     "dependencies": {
-        "docker": "^1.0.0",
-        "express": "^5.2.1",
-        "uuid": "^14.0.0"
+        "express": "^5.2.1"
     }
 }
