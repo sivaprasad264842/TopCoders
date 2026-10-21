@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {
+      "rulePriority": 1,
+      "description": "Keep the 20 newest images (about 10 releases of backend + runner)",
+      "selection": { "tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 20 },
+      "action": { "type": "expire" }
+    }
+  ]
+}

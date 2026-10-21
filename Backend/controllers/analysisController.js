@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { optionalEnv } from "../utils/env.js";
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const MAX_CODE_CHARS = 30000;
@@ -16,11 +17,11 @@ const trimForPrompt = (value, maxLength) => {
     return `${trimmed.slice(0, maxLength)}\n\n[Content truncated for AI analysis.]`;
 };
 
-const getOpenAIKey = () => process.env.OPENAI_API_KEY?.trim();
+const getOpenAIKey = () => optionalEnv("OPENAI_API_KEY");
 
 const hasConfiguredOpenAIKey = () => {
     const key = getOpenAIKey();
-    return Boolean(key && !key.includes("replace_me"));
+    return Boolean(key && key.startsWith("sk-") && !key.includes("replace_me"));
 };
 
 const getStatusPayload = () => {

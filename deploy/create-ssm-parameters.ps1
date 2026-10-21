@@ -1,73 +1,88 @@
 <#
 .SYNOPSIS
-    Stores production secrets in AWS SSM Parameter Store.
+    Stores the production secrets in AWS SSM Parameter Store (encrypted SecureString).
+    ECS injects them into the containers at start-up; they are never baked into images.
+
+.DESCRIPTION
+    - JwtSecret / ExecutionServiceToken: generated for you if omitted (and kept if
+      they already exist, so re-running does not log everyone out).
+    - Optional features you do not use can be omitted; they are stored as
+      "disabled" and the backend treats that as "not configured".
+    - Secret values are never printed.
 
 .EXAMPLE
-    .\create-ssm-parameters.ps1 `
-      -MongoUri              "mongodb+srv://..." `
-      -JwtSecret             "long_random_secret" `
-      -EmailUser             "you@gmail.com" `
-      -EmailPass             "app_password" `
-      -OpenAiApiKey          "sk-..." `
-      -ExecutionServiceToken "long_random_token"
+    .\deploy\create-ssm-parameters.ps1 -AwsProfile topcoders-new `
+        -MongoUri "mongodb+srv://USER:PASS@cluster0.xxxxx.mongodb.net/topcoders" `
+        -ResendApiKey "re_..." -OpenAiApiKey "sk-..."
 #>
 param(
-    [Parameter(Mandatory = $true)]  [string]$MongoUri,
-    [Parameter(Mandatory = $true)]  [string]$JwtSecret,
-    [Parameter(Mandatory = $true)]  [string]$EmailUser,
-    [Parameter(Mandatory = $true)]  [string]$EmailPass,
-    [Parameter(Mandatory = $true)]  [string]$OpenAiApiKey,
-    [Parameter(Mandatory = $true)]  [string]$ExecutionServiceToken,
-    [string]$Region = "ap-south-1"
+    [Parameter(Mandatory = $true)] [string]$MongoUri,
+    [string]$JwtSecret = "",
+    [string]$ExecutionServiceToken = "",
+    [string]$ResendApiKey = "",
+    [string]$EmailUser = "",
+    [string]$EmailPass = "",
+    [string]$OpenAiApiKey = "",
+    [string]$AwsProfile = "topcoders-new",
+    [string]$Region = "ap-south-1",
+    # Regenerate JWT_SECRET and EXECUTION_SERVICE_TOKEN even if they exist (logs everyone out).
+    [switch]$RotateGenerated
 )
 
-$ErrorActionPreference = "Stop"
+. "$PSScriptRoot\lib.ps1"
 
-$parameters = [ordered]@{
-    "/topcoders/MONGO_URI"               = $MongoUri
-    "/topcoders/JWT_SECRET"              = $JwtSecret
-    "/topcoders/EMAIL_USER"              = $EmailUser
-    "/topcoders/EMAIL_PASS"              = $EmailPass
-    "/topcoders/OPENAI_API_KEY"          = $OpenAiApiKey
-    "/topcoders/EXECUTION_SERVICE_TOKEN" = $ExecutionServiceToken
+$AccountId = Use-AwsProfile $AwsProfile $Region
+Write-Host "Storing secrets in account $AccountId ($Region)" -ForegroundColor Yellow
+
+function New-RandomHex {
+    $bytes = New-Object byte[] 32
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    return ($bytes | ForEach-Object { $_.ToString("x2") }) -join ""
 }
 
-$failed  = @()
-$success = @()
+function Test-Parameter([string]$Name) {
+    return Test-Aws ssm get-parameter --name $Name
+}
 
-foreach ($entry in $parameters.GetEnumerator()) {
-    try {
-        $output = aws ssm put-parameter `
-            --region $Region `
-            --name $entry.Key `
-            --type SecureString `
-            --value $entry.Value `
-            --overwrite 2>&1
+if (-not $ResendApiKey -and -not ($EmailUser -and $EmailPass)) {
+    Write-Host "WARNING: no email provider given (-ResendApiKey or -EmailUser/-EmailPass)." -ForegroundColor Yellow
+    Write-Host "         Registration emails will fail until you add one." -ForegroundColor Yellow
+}
 
-        if ($LASTEXITCODE -ne 0) {
-            $failed  += "$($entry.Key): $output"
-        } else {
-            $success += $entry.Key
-            Write-Host "  OK  $($entry.Key)" -ForegroundColor Green
-        }
-    } catch {
-        $failed += "$($entry.Key): $_"
+$parameters = [ordered]@{
+    "/topcoders/MONGO_URI"      = $MongoUri
+    "/topcoders/RESEND_API_KEY" = $(if ($ResendApiKey) { $ResendApiKey } else { "disabled" })
+    "/topcoders/EMAIL_USER"     = $(if ($EmailUser) { $EmailUser } else { "disabled" })
+    "/topcoders/EMAIL_PASS"     = $(if ($EmailPass) { $EmailPass } else { "disabled" })
+    "/topcoders/OPENAI_API_KEY" = $(if ($OpenAiApiKey) { $OpenAiApiKey } else { "disabled" })
+}
+
+foreach ($generated in @(
+        @{ Name = "/topcoders/JWT_SECRET"; Value = $JwtSecret },
+        @{ Name = "/topcoders/EXECUTION_SERVICE_TOKEN"; Value = $ExecutionServiceToken })) {
+    if ($generated.Value) {
+        $parameters[$generated.Name] = $generated.Value
+    } elseif ($RotateGenerated -or -not (Test-Parameter $generated.Name)) {
+        $parameters[$generated.Name] = New-RandomHex
+    } else {
+        Write-Ok "kept     $($generated.Name) (already set; use -RotateGenerated to replace)"
     }
+}
+
+# Each value goes through a temp JSON file, so quotes, spaces and & in
+# passwords or URIs cannot break the command line. The file is deleted at once.
+$tempFile = Join-Path ([System.IO.Path]::GetTempPath()) "topcoders-ssm-$([guid]::NewGuid()).json"
+try {
+    foreach ($entry in $parameters.GetEnumerator()) {
+        $request = @{ Name = $entry.Key; Value = $entry.Value; Type = "SecureString"; Overwrite = $true }
+        Write-Utf8File $tempFile ($request | ConvertTo-Json -Compress)
+        & aws ssm put-parameter --cli-input-json (ConvertTo-FileUri $tempFile) | Out-Null
+        if ($LASTEXITCODE -ne 0) { Fail "Could not store $($entry.Key) (see the error above)." }
+        Write-Ok "stored   $($entry.Key)"
+    }
+} finally {
+    Remove-Item -Force -ErrorAction SilentlyContinue $tempFile
 }
 
 Write-Host ""
-
-if ($failed.Count -eq 0) {
-    Write-Host "All $($success.Count) parameters stored successfully." -ForegroundColor Green
-} else {
-    Write-Host "$($success.Count) stored, $($failed.Count) FAILED:" -ForegroundColor Yellow
-    foreach ($f in $failed) {
-        Write-Host "  FAIL  $f" -ForegroundColor Red
-    }
-    Write-Host ""
-    Write-Host "Most likely cause: your IAM user has a permissions boundary that does not" -ForegroundColor Yellow
-    Write-Host "allow ssm:PutParameter. Fix options:" -ForegroundColor Yellow
-    Write-Host "  Option A: Remove or update the permissions boundary in IAM Console." -ForegroundColor Yellow
-    Write-Host "  Option B: Use the AWS Console to create parameters manually (see DEPLOYMENT.md)." -ForegroundColor Yellow
-    exit 1
-}
+Write-Host "All secrets stored. Run .\deploy\deploy.ps1 next." -ForegroundColor Green

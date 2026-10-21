@@ -1,58 +1,54 @@
 import axios from "axios";
+import runnerManager from "./runnerManager.js";
+import { HttpError, RunnerUnavailableError } from "../utils/httpError.js";
 
-const EXECUTION_SERVICE_URL =
-    process.env.EXECUTION_SERVICE_URL;
-const EXECUTION_SERVICE_TOKEN = process.env.EXECUTION_SERVICE_TOKEN?.trim();
+const TOKEN = process.env.EXECUTION_SERVICE_TOKEN?.trim();
+const HEADERS = TOKEN ? { "x-execution-service-token": TOKEN } : {};
 
-const executionError = (message) => ({
-    stdout: "",
-    stderr: message,
-    status: "runtime_error",
-    time: "0ms",
-});
+// How long a Run/Submit request waits for a cold-starting sandbox.
+// Kept below the load balancer's request timeout.
+const RUNNER_WAIT_MS = 45_000;
 
-export const executeCode = async (payload) => {
-    if (EXECUTION_SERVICE_URL.includes(":5000/")) {
-        const message =
-            "EXECUTION_SERVICE_URL points to the backend server itself. Set it to the runner service URL (port 5001).";
-        console.error("EXECUTION ERROR:", message);
-        return executionError(message);
-    }
+async function callRunner(userId, path, body, timeoutMs) {
+    const baseUrl = await runnerManager.acquire(userId, { waitMs: RUNNER_WAIT_MS });
 
     try {
-        const headers = EXECUTION_SERVICE_TOKEN
-            ? { "x-execution-service-token": EXECUTION_SERVICE_TOKEN }
-            : {};
-
-        const res = await axios.post(EXECUTION_SERVICE_URL, payload, {
-            headers,
-            timeout: 15000,
-        });
-
-        const missingRunnerScript =
-            typeof res.data?.stderr === "string" &&
-            res.data.stderr.includes("/app/runner.sh: No such file or directory");
-
-        if (missingRunnerScript) {
-            const message =
-                "Execution service is misconfigured: runner script not found inside the container.";
-            console.error("EXECUTION ERROR:", message);
-            return executionError(message);
-        }
-
+        const res = await axios.post(`${baseUrl}${path}`, body, { headers: HEADERS, timeout: timeoutMs });
         return res.data;
     } catch (err) {
-        const serviceError =
-            err.response?.data?.error ||
-            err.code ||
-            err.message ||
-            "Unknown execution service error";
+        const status = err.response?.status;
 
-        const message = `Execution service failed: ${serviceError}`;
-        console.error("EXECUTION ERROR:", message);
+        if (status === 400 || status === 413) {
+            throw new HttpError(400, err.response.data?.error || "The code runner rejected this request.");
+        }
+        if (status === 401) {
+            console.error("[exec] runner rejected the service token (EXECUTION_SERVICE_TOKEN mismatch)");
+            throw new RunnerUnavailableError("RUNNER_MISCONFIGURED", "The code runner is misconfigured. Please try later.");
+        }
+        if (status) {
+            console.error(`[exec] runner returned HTTP ${status}`);
+            throw new RunnerUnavailableError("RUNNER_ERROR", "The code runner failed. Please try again.");
+        }
 
-        return executionError(
-            `${message}. Check EXECUTION_SERVICE_URL and make sure the runner container is running.`,
+        // No response at all: the runner is gone or hung.
+        console.error(`[exec] runner unreachable at ${baseUrl}: ${err.code || err.message}`);
+        runnerManager.markBroken(userId, baseUrl);
+        throw new RunnerUnavailableError(
+            "RUNNER_UNREACHABLE",
+            runnerManager.mode === "ecs"
+                ? "Lost connection to your code sandbox. A new one will start; please try again."
+                : "The code runner is not reachable. Is the runner container running?",
         );
     }
-};
+}
+
+/** "Run" button. Returns { status, stdout, stderr, time }. */
+export const runCode = (userId, { code, language, input }) =>
+    callRunner(userId, "/execute", { code, language, input }, 60_000);
+
+/**
+ * "Submit" button. Compiles once and runs every test on the runner.
+ * Returns { status, passed, total, totalTimeMs, failed }.
+ */
+export const judgeSubmission = (userId, { code, language, tests }) =>
+    callRunner(userId, "/execute-batch", { code, language, tests }, 30_000 + tests.length * 7_000);

@@ -1,255 +1,120 @@
-# Deployment Guide — TopCoders
+# Deployment — TopCoders on AWS
 
-## Architecture
+Region `ap-south-1` (Mumbai). Frontend on Netlify, API on ECS Fargate behind an ALB, one runner task per active user.
 
 ```
-Browser (topcoders.online)
-    │
-    ▼ Netlify (static frontend)
-    │
-    └─► api.topcoders.online
-            │
-            ▼ AWS ALB → ECS Fargate Task
-                ┌──────────────────────────────┐
-                │  backend (port 5000)         │
-                │     │ http://127.0.0.1:5001  │
-                │     ▼                        │
-                │  runner  (port 5001)         │
-                └──────────────────────────────┘
+Browser ──► Netlify (topcoders.online)
+   └──────► api.topcoders.online ──► ALB (HTTPS) ──► backend service (ECS, always on)
+                                                        │  RunTask / StopTask
+                                                        ▼
+                                          runner task per active user (ECS, on demand)
 ```
 
-Both containers run inside the **same ECS task**, sharing `localhost`.
-The runner is never exposed to the internet — only the backend calls it.
+All scripts are PowerShell (Windows PowerShell 5.1 or PowerShell 7), idempotent, and stop at the first failing step.
 
----
+## 0. Prerequisites (once)
 
-## What You Have Already
+1. Install **AWS CLI v2**, **Docker Desktop**, **Node 22**, **Git**.
+2. In the new AWS account: IAM → Users → Create user `topcoders-deploy`, attach `AdministratorAccess` for the first setup (afterwards you can switch to `deploy/iam/deployer-policy.json`), then create an access key (CLI).
+3. `aws configure --profile topcoders-new` (region `ap-south-1`, output `json`).
+4. Set a **billing alarm**: Billing → Budgets → Create budget → monthly cost budget, e.g. $10, with email alerts.
 
-| Resource | Value |
-|---|---|
-| AWS Account | `404619633498` |
-| Region | `ap-south-1` (Mumbai) |
-| ECR repo | `404619633498.dkr.ecr.ap-south-1.amazonaws.com/topcoders` |
-| ECS cluster | `topcoders` |
-| ECS service | `topcoders-api` |
-| Subnets | `subnet-0bd6f65a92851ff57`, `subnet-0ec4b1a7a61209264` |
-| ECS security group | `sg-0ffa50da26672ef1b` |
-| Frontend | Netlify → `topcoders.online` |
-| Domain registrar | GoDaddy (`topcoders.online`) |
-
----
-
-## What Still Needs To Be Done
-
-1. [Create an Application Load Balancer](#step-1--create-an-application-load-balancer)
-2. [Request an SSL certificate](#step-2--request-an-ssl-certificate)
-3. [Add HTTPS listener to the ALB](#step-3--add-https-listener)
-4. [Point `api.topcoders.online` at the ALB](#step-4--point-domain-to-alb)
-5. [Rebuild and redeploy the frontend](#step-5--rebuild-and-redeploy-frontend)
-
----
-
-## Step 1 — Create an Application Load Balancer
-
-Go to **AWS Console → EC2 → Load Balancers → Create Load Balancer → Application Load Balancer**.
-
-**Basic configuration:**
-- Name: `topcoders-alb`
-- Scheme: `Internet-facing`
-- IP type: `IPv4`
-
-**Network mapping:**
-- VPC: your default VPC
-- Availability zones: tick both `ap-south-1a` and `ap-south-1b`
-- For each AZ, select one of your existing subnets (`subnet-0bd6f65a92851ff57` and `subnet-0ec4b1a7a61209264`)
-
-**Security groups:**
-- Remove the default SG
-- Click **Create new security group**:
-  - Name: `topcoders-alb-sg`
-  - Inbound rules: HTTP 80 from `0.0.0.0/0`, HTTPS 443 from `0.0.0.0/0`
-  - Outbound rules: All traffic (default)
-  - Create
-- Select `topcoders-alb-sg`
-
-**Listeners and routing (HTTP:80 only for now):**
-- Click **Create target group**:
-  - Target type: `IP addresses`
-  - Name: `topcoders-tg`
-  - Protocol: HTTP, Port: `5000`
-  - Health check path: `/health`
-  - Create
-- Back in the ALB form, select `topcoders-tg` as the target for port 80
-
-**Create the ALB.** It takes 2–3 minutes. Copy the **DNS name** once it appears — it looks like:
-```
-topcoders-alb-1234567890.ap-south-1.elb.amazonaws.com
-```
-
-**Connect ECS to the ALB** — Go to **ECS → Clusters → topcoders → Services → topcoders-api → Update**:
-- Load balancer type: Application Load Balancer
-- Load balancer: `topcoders-alb`
-- Container to load balance: `backend : 5000`
-- Target group: `topcoders-tg`
-- Update service
-
-**Lock down the ECS security group** — Go to **EC2 → Security Groups → `sg-0ffa50da26672ef1b` → Edit inbound rules**:
-- Remove the existing port 5000 rule that allows `0.0.0.0/0`
-- Add: Custom TCP, Port `5000`, Source = `topcoders-alb-sg` (select by name)
-- Save
-
----
-
-## Step 2 — Request an SSL Certificate
-
-Go to **AWS Certificate Manager → Request certificate**:
-- Type: Public certificate
-- Domain names: add both:
-  - `api.topcoders.online`
-  - `topcoders.online`
-  - `www.topcoders.online`
-- Validation method: DNS validation
-- Request
-
-Click the pending certificate, then **Create records in Route 53** — or copy the CNAME name/value and add them manually in GoDaddy under **DNS → Add Record → CNAME**.
-
-Wait until the certificate status changes to **Issued** (usually 5–10 minutes after the DNS records are added).
-
----
-
-## Step 3 — Add HTTPS Listener
-
-Go to **EC2 → Load Balancers → topcoders-alb → Listeners → Add listener**:
-- Protocol: HTTPS, Port: 443
-- Default action: Forward to `topcoders-tg`
-- Certificate: select the one you just issued
-- Add
-
-Then **edit the HTTP 80 listener**:
-- Default action: Redirect to HTTPS 443
-- Save
-
----
-
-## Step 4 — Point Domain to ALB
-
-In **GoDaddy → DNS** for `topcoders.online`, add:
-
-| Type  | Name  | Value |
-|-------|-------|-------|
-| CNAME | `api` | `<your-alb-dns-name>` |
-
-Replace `<your-alb-dns-name>` with the ALB DNS name you copied in Step 1.
-
-DNS propagation takes 5–30 minutes. Test with:
+## 1. Bootstrap the account (once)
 
 ```powershell
-curl https://api.topcoders.online/health
+.\deploy\setup-aws.ps1 -AwsProfile topcoders-new
 ```
 
-Expected response:
-```json
-{"ok":true,"service":"backend"}
-```
+This creates the IAM roles, log group, ECR repository, ECS cluster (Fargate + Fargate Spot), three security groups, target group and ALB. It saves the IDs to `deploy/aws-config.json` (gitignored).
 
----
+| Security group | Inbound | Outbound |
+|---|---|---|
+| `topcoders-alb-sg` | 80, 443 from internet | all |
+| `topcoders-backend-sg` | 5000 from ALB SG | all (MongoDB Atlas, email, OpenAI, runners) |
+| `topcoders-runner-sg` | 5001 from backend SG | **443 only** (image pull, logs, secrets) |
 
-## Step 5 — Rebuild and Redeploy Frontend
-
-Create `d:\OJ\Frontend\.env` (not `.env.example`):
-
-```env
-VITE_API_URL=https://api.topcoders.online/api
-```
-
-Build:
+## 2. Secrets (once, and whenever one changes)
 
 ```powershell
-cd d:\OJ\Frontend
-npm install
-npm run build
+.\deploy\create-ssm-parameters.ps1 -AwsProfile topcoders-new `
+    -MongoUri "mongodb+srv://USER:PASS@cluster0.xxxxx.mongodb.net/topcoders" `
+    -ResendApiKey "re_..." `
+    -OpenAiApiKey "sk-..."
 ```
 
-The output is in `Frontend\dist\`. Deploy to Netlify:
+`JWT_SECRET` and `EXECUTION_SERVICE_TOKEN` are generated automatically. Treat the old account's values as compromised. Features you skip are stored as `disabled`.
 
-**Option A — Netlify CLI:**
-```powershell
-npx netlify deploy --prod --dir dist
-```
+**MongoDB Atlas:** Network Access must allow the backend. Fargate public IPs change on every deploy, so allow `0.0.0.0/0` and rely on a strong database password, or use Atlas private endpoints (paid tiers).
 
-**Option B — Netlify Dashboard:**
-Go to your Netlify site → **Deploys → drag and drop the `dist` folder**.
-
----
-
-## Redeploying After Backend/Runner Code Changes
-
-Run from `d:\OJ\`:
+## 3. Deploy (every release)
 
 ```powershell
 .\deploy\deploy.ps1
 ```
 
-All parameters are already pre-filled with real values. The script will:
-1. Build and push new Docker images to ECR
-2. Register an updated ECS task definition
-3. Force ECS to restart with the new images
+This builds both images (tagged `backend-<time>-<git sha>` / `runner-<time>-<git sha>`), pushes them to ECR, and registers `topcoders-runner` and `topcoders-backend`. It then creates or updates the `topcoders-backend` service and waits until it is healthy. A failed rollout is rolled back automatically.
 
-Takes ~5 minutes. Monitor progress:
-- **ECS tasks:** `https://ap-south-1.console.aws.amazon.com/ecs/v2/clusters/topcoders/services/topcoders-api/tasks`
-- **CloudWatch logs:** `https://ap-south-1.console.aws.amazon.com/cloudwatch/home#logsV2:log-groups/log-group/%2Fecs%2Ftopcoders`
+Useful flags: `-SkipBuild` (config-only change, reuses current images), `-ClientUrl "..."`, `-RunnerCapacityProvider FARGATE_SPOT`, `-MaxRunners 10`.
 
----
+## 4. Domain and HTTPS (once)
 
-## Updating Secrets in SSM
+1. Test over HTTP first: `curl http://<LoadBalancerDns>/health` (DNS name is in `deploy/aws-config.json`).
+2. ACM (region **ap-south-1**) → Request public certificate → `api.topcoders.online` → DNS validation. Add the CNAME it shows in GoDaddy and wait for **Issued**.
+3. Add HTTPS and redirect HTTP:
+   ```powershell
+   .\deploy\setup-aws.ps1 -AwsProfile topcoders-new -CertificateArn arn:aws:acm:ap-south-1:...:certificate/...
+   ```
+4. GoDaddy DNS: `CNAME  api  →  <LoadBalancerDns>` (TTL 600).
+5. `curl https://api.topcoders.online/health` returns `{"ok":true,...,"runners":{"mode":"ecs",...}}`.
 
-If you need to change a secret (e.g. rotate the JWT secret):
+## 5. Frontend (Netlify)
 
-```powershell
-aws ssm put-parameter `
-  --region ap-south-1 `
-  --name "/topcoders/JWT_SECRET" `
-  --value "new_secret_here" `
-  --type SecureString `
-  --overwrite
-```
+Site settings → Environment variables → `VITE_API_URL=https://api.topcoders.online/api`, then trigger a deploy (build `npm run build`, publish `dist`, base directory `Frontend`). `netlify.toml` already handles SPA routing.
 
-Then redeploy so ECS picks up the new value:
+## Verify
 
-```powershell
-.\deploy\deploy.ps1
-```
-
-SSM parameters used by this project:
-
-| Parameter | Description |
+| Check | Expected |
 |---|---|
-| `/topcoders/MONGO_URI` | MongoDB Atlas connection string |
-| `/topcoders/JWT_SECRET` | JWT signing secret (generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`) |
-| `/topcoders/EMAIL_USER` | Gmail address for sending emails |
-| `/topcoders/EMAIL_PASS` | Gmail App Password (16-char code from Google Account → Security → App Passwords) |
-| `/topcoders/OPENAI_API_KEY` | OpenAI API key (leave empty to disable AI analysis) |
-| `/topcoders/EXECUTION_SERVICE_TOKEN` | Shared secret between backend and runner |
+| Open a problem while logged in | Badge shows "Starting sandbox…", then "Sandbox ready" (~30–60 s first time). A task appears in ECS → Tasks |
+| Run / Submit | Output and verdict. Logs under `/ecs/topcoders` stream `runner/...` |
+| Close the tab | Runner task stops after ~60 s |
+| Leave the tab idle 10 min | Runner task stops |
+| Two users | Two runner tasks |
+| Logout | Runner stops immediately |
 
----
+## Operations
+
+```powershell
+aws logs tail /ecs/topcoders --follow --profile topcoders-new
+aws ecs list-tasks --cluster topcoders --profile topcoders-new
+aws ecs stop-task --cluster topcoders --task <arn> --profile topcoders-new
+.\deploy\deploy.ps1 -SkipBuild -ClientUrl "https://topcoders.online,https://www.topcoders.online"
+```
+
+**Rollback:** ECS → service → Update → pick an older `topcoders-backend` revision. Or re-run `deploy.ps1` from an older git commit.
 
 ## Troubleshooting
 
-| Symptom | Where to look |
+| Symptom | Cause / fix |
 |---|---|
-| ECS task keeps stopping | ECS → Clusters → topcoders → Tasks → click task → Logs tab |
-| "Run Code" returns error | CloudWatch → /ecs/topcoders → runner log stream |
-| Backend not reachable | EC2 → Load Balancers → topcoders-alb → Target Groups → check `topcoders-tg` health |
-| 502 Bad Gateway | ECS task may still be starting — wait 2 min and retry |
-| Email not sending | Check SSM has correct EMAIL_USER and EMAIL_PASS |
-| SSL certificate not working | Confirm CNAME validation records exist in GoDaddy DNS |
+| Badge stays "Starting sandbox…", then "unavailable" | Backend logs `[runner] start failed`: check the reason. Usually the runner image is missing in ECR or the SSM parameter `/topcoders/EXECUTION_SERVICE_TOKEN` is missing. |
+| `AccessDeniedException` on RunTask | Backend task role missing. Re-run `setup-aws.ps1`. |
+| "Lost connection to your code sandbox" | Runner unreachable on 5001: `topcoders-runner-sg` must allow 5001 from `topcoders-backend-sg`. |
+| "The code runner is misconfigured" | Backend and runner `EXECUTION_SERVICE_TOKEN` differ. Re-run deploy after fixing SSM. |
+| 502/503 from ALB | Backend not healthy yet. Check ECS service Events and the target group health. |
+| 504 on long submissions | ALB idle timeout must be 300 s (set by `setup-aws.ps1`). |
+| CORS error in browser | `-ClientUrl` must contain the exact frontend origin. Redeploy with `-SkipBuild`. |
+| Task stops with `ResourceInitializationError` | Secret missing in SSM or execution role lacks access. Re-run both setup scripts. |
 
----
+## Monthly cost (approximate, low traffic)
 
-## Security Checklist
+| Item | Cost |
+|---|---|
+| Backend Fargate task 0.25 vCPU / 0.5 GB, 24/7 | ~$9 |
+| ALB (hourly + LCU) | ~$16–18 |
+| Public IPv4 addresses (ALB ×2, backend ×1, runners while running) | ~$11 |
+| Runner tasks 1 vCPU / 2 GB, ~60 h/month | ~$3 (≈$1 on Spot) |
+| ECR, CloudWatch Logs (14-day retention), SSM | < $1 |
+| **Total** | **≈ $40/month** (the old always-on 1 vCPU / 3 GB task alone was ≈ $40, before ALB and IPs) |
 
-- `.env` files are in `.gitignore` — never commit them
-- All runtime secrets live in SSM Parameter Store — never in Docker images
-- The runner container has no public inbound access — only the backend calls it on localhost
-- ECS security group only allows port 5000 from the ALB security group
-- Rotate any secret that was ever committed to git or shared in chat
+The ALB and public IPs are the fixed floor. See the project PDF for cheaper alternatives (CloudFront/API Gateway in front instead of an ALB, or a single small EC2 instance).

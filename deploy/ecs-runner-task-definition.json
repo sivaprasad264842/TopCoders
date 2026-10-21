@@ -1,0 +1,41 @@
+{
+  "family": "topcoders-runner",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::__ACCOUNT_ID__:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "runner",
+      "image": "__RUNNER_IMAGE__",
+      "essential": true,
+      "portMappings": [{ "containerPort": 5001, "protocol": "tcp", "appProtocol": "http" }],
+      "environment": [
+        { "name": "NODE_ENV",          "value": "production" },
+        { "name": "PORT",              "value": "5001" },
+        { "name": "TEMP_DIR",          "value": "/tmp/oj-jobs" },
+        { "name": "IDLE_EXIT_MINUTES", "value": "15" }
+      ],
+      "secrets": [
+        { "name": "EXECUTION_SERVICE_TOKEN", "valueFrom": "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/topcoders/EXECUTION_SERVICE_TOKEN" }
+      ],
+      "linuxParameters": { "initProcessEnabled": true },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/topcoders",
+          "awslogs-region": "__REGION__",
+          "awslogs-stream-prefix": "runner"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 20
+      }
+    }
+  ]
+}

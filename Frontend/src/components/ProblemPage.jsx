@@ -10,17 +10,27 @@ import {
     getProblemById,
     getProblems,
     deleteProblem,
+    getErrorMessage,
     runCode,
     submitCode,
 } from "../api";
-import EditProblemModal from "./EditProblemModal";
+import { useRunnerSession } from "../hooks/useRunnerSession";
+import ProblemFormModal from "./ProblemFormModal";
 import "../CSS/Problem.css";
+
+const RUNNER_LABELS = {
+    idle: "Sandbox idle",
+    starting: "Starting sandbox…",
+    ready: "Sandbox ready",
+    error: "Sandbox unavailable",
+};
 
 function ProblemPage() {
     const { id } = useParams();
     const navigate = useNavigate();
 
     const [problem, setProblem] = useState(null);
+    const [loadError, setLoadError] = useState("");
     const [editOpen, setEditOpen] = useState(false);
     const [loginPrompt, setLoginPrompt] = useState("");
     const [revealedHints, setRevealedHints] = useState([]);
@@ -42,6 +52,7 @@ function ProblemPage() {
 
     const userId = localStorage.getItem("userId");
     const token = localStorage.getItem("token");
+    const runner = useRunnerSession(Boolean(token));
 
     const defaultCode = {
         javascript:
@@ -53,6 +64,7 @@ function ProblemPage() {
 
     const [language, setLanguage] = useState("javascript");
     const [code, setCode] = useState(defaultCode.javascript);
+    const draftsRef = useRef({}); // language -> unsaved code, so switching back keeps it
     const [input, setInput] = useState("");
     const [output, setOutput] = useState("");
     const [verdict, setVerdict] = useState(null);
@@ -62,9 +74,14 @@ function ProblemPage() {
         try {
             const res = await getProblemById(id);
             setProblem(res.data);
+            setLoadError("");
             setInput((current) => current || res.data.testCases?.[0]?.input || "");
         } catch (err) {
-            console.error(err);
+            setLoadError(
+                err.response?.status === 404
+                    ? "This problem does not exist or was deleted."
+                    : getErrorMessage(err, "Could not load this problem."),
+            );
         }
     }, [id]);
 
@@ -110,7 +127,22 @@ function ProblemPage() {
             );
     }, []);
 
-    if (!problem) return <div className="page-loading">Loading problem...</div>;
+    if (!problem) {
+        return (
+            <div className="page-loading">
+                {loadError ? (
+                    <div className="load-error">
+                        <p>{loadError}</p>
+                        <button className="secondary-btn" onClick={() => navigate("/")}>
+                            Back to problems
+                        </button>
+                    </div>
+                ) : (
+                    "Loading problem..."
+                )}
+            </div>
+        );
+    }
 
     const ownerId =
         problem.createdBy?._id?.toString() || problem.createdBy?.toString();
@@ -135,7 +167,7 @@ function ProblemPage() {
             await deleteProblem(id);
             navigate("/");
         } catch (err) {
-            console.error("Error:", err);
+            window.alert(getErrorMessage(err, "Could not delete the problem."));
         }
     };
 
@@ -163,13 +195,7 @@ function ProblemPage() {
                 setOutput(stdout || stderr || "No output");
             }
         } catch (err) {
-            console.error(err);
-            const message =
-                err.response?.data?.error ||
-                err.response?.data?.message ||
-                err.message ||
-                "Error running code";
-            setOutput(message);
+            setOutput(getErrorMessage(err, "Error running code"));
         } finally {
             setLoading(false);
         }
@@ -183,6 +209,7 @@ function ProblemPage() {
 
         setLoading(true);
         setVerdict(null);
+        setOutput("");
 
         try {
             const res = await submitCode({
@@ -194,8 +221,8 @@ function ProblemPage() {
             setVerdict(res.data);
             fetchSubmissionData();
         } catch (err) {
-            console.error(err);
-            setVerdict({ verdict: "Submission failed" });
+            // Nothing was recorded (e.g. sandbox still starting): explain and let them retry.
+            setOutput(getErrorMessage(err, "Submission failed. Please try again."));
         } finally {
             setLoading(false);
         }
@@ -225,11 +252,7 @@ function ProblemPage() {
             });
             setAnalysis(res.data.analysis);
         } catch (err) {
-            const message =
-                err.response?.data?.error ||
-                err.message ||
-                "Failed to analyze code.";
-            setAnalysis(message);
+            setAnalysis(getErrorMessage(err, "Failed to analyze code."));
         } finally {
             setAnalysisLoading(false);
         }
@@ -418,7 +441,14 @@ function ProblemPage() {
                                 {(problem.testCases || []).map((tc, index) => (
                                     <div className="sample-card" key={index}>
                                         <div className="case-title">
-                                            <strong>Case {index + 1}</strong>
+                                            <strong>
+                                                Case {index + 1}
+                                                {tc.hidden && (
+                                                    <span className="hidden-badge">
+                                                        Hidden (only you see this)
+                                                    </span>
+                                                )}
+                                            </strong>
                                             <button
                                                 onClick={() => setInput(tc.input)}
                                                 type="button"
@@ -438,6 +468,13 @@ function ProblemPage() {
                                         </div>
                                     </div>
                                 ))}
+                                {!isOwner && problem.hiddenTestCount > 0 && (
+                                    <p className="hidden-note">
+                                        + {problem.hiddenTestCount} hidden test case
+                                        {problem.hiddenTestCount === 1 ? "" : "s"} used
+                                        when you submit.
+                                    </p>
+                                )}
                             </div>
 
                             {(problem.hints || []).length > 0 && (
@@ -508,19 +545,13 @@ function ProblemPage() {
                                                             alt=""
                                                         />
                                                     ) : (
-                                                        (
-                                                            user.username ||
-                                                            user.email ||
-                                                            "U"
-                                                        )
+                                                        (user.username || "U")
                                                             .charAt(0)
                                                             .toUpperCase()
                                                     )}
                                                 </span>
                                                 <span className="leaderboard-user">
-                                                    <strong>
-                                                        {user.username || user.email}
-                                                    </strong>
+                                                    <strong>{user.username}</strong>
                                                     <small>
                                                         {user.accepted > 0
                                                             ? `${user.accepted} accepted | ${user.submissions} submissions`
@@ -535,10 +566,6 @@ function ProblemPage() {
                                             </summary>
                                             <div className="leaderboard-profile">
                                                 <p>{user.bio || "No description added."}</p>
-                                                <div>
-                                                    <span>{user.email}</span>
-                                                    {user.phone && <span>{user.phone}</span>}
-                                                </div>
                                                 <div className="profile-links compact-links">
                                                     {user.socialLinks?.github && (
                                                         <a
@@ -617,8 +644,10 @@ function ProblemPage() {
                         <select
                             value={language}
                             onChange={(e) => {
-                                setLanguage(e.target.value);
-                                setCode(defaultCode[e.target.value]);
+                                const next = e.target.value;
+                                draftsRef.current[language] = code;
+                                setLanguage(next);
+                                setCode(draftsRef.current[next] ?? defaultCode[next]);
                             }}
                         >
                             <option value="javascript">JavaScript</option>
@@ -644,6 +673,17 @@ function ProblemPage() {
                         >
                             AI Analyze
                         </button>
+                        {token && (
+                            <span
+                                className={`runner-status ${runner.status}`}
+                                title={
+                                    runner.message ||
+                                    "Your code runs in a private sandbox that starts on demand and stops when you leave."
+                                }
+                            >
+                                {RUNNER_LABELS[runner.status]}
+                            </span>
+                        )}
                     </div>
 
                     <div className="editor-frame">
@@ -671,7 +711,13 @@ function ProblemPage() {
                     </label>
 
                     <div className="output">
-                        {loading && <p>Running...</p>}
+                        {loading && (
+                            <p>
+                                {runner.status === "starting"
+                                    ? "Starting your sandbox (first run takes up to a minute)..."
+                                    : "Running..."}
+                            </p>
+                        )}
 
                         {output && (
                             <>
@@ -705,25 +751,29 @@ function ProblemPage() {
                                 {latestVerdict.failedTestCase && (
                                     <div className="failed-case">
                                         <strong>
-                                            Failed test case{" "}
-                                            {latestVerdict.failedTestCase.index}
+                                            {latestVerdict.failedTestCase.index == null
+                                                ? "Compilation failed"
+                                                : `Failed ${
+                                                      latestVerdict.failedTestCase.hidden
+                                                          ? "hidden "
+                                                          : ""
+                                                  }test case ${latestVerdict.failedTestCase.index}`}
                                         </strong>
-                                        <span>Input</span>
-                                        <pre>{latestVerdict.failedTestCase.input}</pre>
-                                        <span>Expected</span>
-                                        <pre>
-                                            {
-                                                latestVerdict.failedTestCase
-                                                    .expectedOutput
-                                            }
-                                        </pre>
-                                        <span>Your Output</span>
-                                        <pre>
-                                            {
-                                                latestVerdict.failedTestCase
-                                                    .actualOutput
-                                            }
-                                        </pre>
+                                        {latestVerdict.failedTestCase.index != null &&
+                                            !latestVerdict.failedTestCase.hidden && (
+                                                <>
+                                                    <span>Input</span>
+                                                    <pre>{latestVerdict.failedTestCase.input}</pre>
+                                                    <span>Expected</span>
+                                                    <pre>
+                                                        {latestVerdict.failedTestCase.expectedOutput}
+                                                    </pre>
+                                                    <span>Your Output</span>
+                                                    <pre>
+                                                        {latestVerdict.failedTestCase.actualOutput}
+                                                    </pre>
+                                                </>
+                                            )}
                                         {latestVerdict.failedTestCase.error && (
                                             <>
                                                 <span>Error</span>
@@ -850,8 +900,8 @@ function ProblemPage() {
             )}
 
             {editOpen && isOwner && (
-                <EditProblemModal
-                    problem={problem}
+                <ProblemFormModal
+                    problemId={problem.problemId}
                     close={() => setEditOpen(false)}
                     refresh={fetchProblem}
                 />

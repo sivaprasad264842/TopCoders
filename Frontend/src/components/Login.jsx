@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import API from "../api";
+import API, { getErrorMessage } from "../api";
 import "../CSS/Register.css";
 import "../CSS/Login.css";
 
@@ -57,12 +57,10 @@ function Login() {
 
             navigate("/");
         } catch (err) {
-            const errorMsg =
-                err.response?.data?.msg || 
-                err.message ||
-                "Login failed. Please try again.";
-
-            setMessage({ text: errorMsg, type: "error" });
+            setMessage({
+                text: getErrorMessage(err, "Login failed. Please try again."),
+                type: "error",
+            });
         } finally {
             setLoading(false);
         }

@@ -1,4 +1,8 @@
 node_modules
 npm-debug.log
 temp
+test
 .git
+.env
+.env.*
+*.md

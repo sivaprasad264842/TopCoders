@@ -3,25 +3,27 @@ FROM node:22-bookworm-slim
 ENV NODE_ENV=production \
     TEMP_DIR=/tmp/oj-jobs
 
-RUN apt-get update && apt-get install -y \
-    python3 \
-    openjdk-17-jdk \
-    g++ \
-    coreutils \
-    util-linux \
+# Compilers / interpreters for the supported languages.
+# util-linux provides prlimit, used to cap file sizes written by user code.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 \
+        openjdk-17-jdk-headless \
+        g++ \
+        util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY --chown=node:node package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --chown=node:node . .
-RUN chmod +x /app/runner.sh
 RUN mkdir -p /tmp/oj-jobs && chown -R node:node /tmp/oj-jobs
 
 EXPOSE 5001
 
+# User code runs as this unprivileged user, never as root.
 USER node
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

@@ -1,104 +1,43 @@
 import "dotenv/config";
-import express from "express";
+import { createApp } from "./app.js";
 import connectDB from "./config/db.js";
-import cors from "cors";
-import authRoutes from "./routes/authRoutes.js";
-import problemRoutes from "./routes/problemRoutes.js";
-import codeRoutes from "./routes/codeRoutes.js";
+import runnerManager from "./services/runnerManager.js";
 
-const PORT = process.env.PORT || 5000;
-const app = express();
-let server;
+const PORT = Number(process.env.PORT) || 5000;
 
-const configuredOrigins = (process.env.CLIENT_URL || "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
+if (!process.env.JWT_SECRET) {
+    console.error("JWT_SECRET is not set. Refusing to start.");
+    process.exit(1);
+}
 
-const allowedOrigins = [
-    ...configuredOrigins,
-    configuredOrigins.length === 0 ? "http://localhost:5173" : "",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-].filter(Boolean);
+const app = createApp();
+const server = app.listen(PORT, () => {
+    console.log(`API listening on ${PORT} (runner mode: ${runnerManager.mode})`);
+});
 
-const corsOptions = {
-    origin(origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) {
-            return callback(null, true);
-        }
-        return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-};
+server.on("error", (err) => {
+    console.error(`Server failed to start: ${err.message}`);
+    process.exit(1);
+});
 
-app.use(cors(corsOptions));
-app.options(/.*/, cors(corsOptions));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+// Long submissions can exceed Node's defaults; keep these above the ALB idle timeout.
+server.requestTimeout = 5 * 60_000;
+server.keepAliveTimeout = 65_000;
 
-const startServer = async () => {
-    server = app.listen(PORT, () => {
-        console.log(`Server running on ${PORT}`);
-    });
+// Don't block startup on these: /health answers immediately so the load balancer is happy.
+connectDB();
+runnerManager.init().catch((err) => console.error("Runner manager init failed:", err.message));
 
-    server.on("error", (err) => {
-        console.error(`Server failed to start: ${err.message}`);
-        process.exit(1);
-    });
-
-    connectDB().then((dbConnected) => {
-        if (!dbConnected) {
-            console.warn(
-                "API is running without MongoDB. DB-backed routes may fail until MongoDB is reachable.",
-            );
-        }
-    });
-};
-
+let shuttingDown = false;
 const shutdown = async (signal) => {
-    console.log(`Received ${signal}. Shutting down server...`);
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`Received ${signal}. Shutting down...`);
 
-    if (server) {
-        server.close(() => {
-            console.log("HTTP server closed");
-            process.exit(0);
-        });
-        return;
-    }
-
-    process.exit(0);
+    setTimeout(() => process.exit(1), 10_000).unref(); // hard stop if something hangs
+    await runnerManager.shutdown(); // don't leave paid runner tasks behind
+    server.close(() => process.exit(0));
 };
 
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));
-process.once("SIGUSR2", () => {
-    if (server) {
-        server.close(() => {
-            process.kill(process.pid, "SIGUSR2");
-        });
-        return;
-    }
-
-    process.kill(process.pid, "SIGUSR2");
-});
-
-app.use("/api/auth", authRoutes);
-app.use("/api/problems", problemRoutes);
-app.use("/api/code", codeRoutes);
-
-app.get("/", (req, res) => {
-    res.json({ message: "API is Running" });
-});
-
-app.get("/health", (req, res) => {
-    res.json({
-        ok: true,
-        service: "backend",
-        timestamp: new Date().toISOString(),
-    });
-});
-
-startServer();

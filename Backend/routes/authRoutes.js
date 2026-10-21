@@ -1,23 +1,23 @@
 import express from "express";
-import cors from "cors";
 import {
-    registerUser,
-    verifyUser,
-    loginUser,
+    getAvatar,
     getCurrentUser,
     getLeaderboard,
+    loginUser,
+    registerUser,
     updateCurrentUser,
+    verifyUser,
 } from "../controllers/authController.js";
 import { authMiddleware } from "../middleware/authMiddleware.js";
+import { authLimiter } from "../middleware/rateLimiters.js";
 
 const router = express.Router();
-const preflightCors = cors();
 
-router.options("/login", preflightCors);
-router.post("/register", registerUser);
-router.get("/verify/:token", verifyUser);
-router.post("/login", loginUser);
+router.post("/register", authLimiter, registerUser);
+router.get("/verify/:token", authLimiter, verifyUser);
+router.post("/login", authLimiter, loginUser);
 router.get("/leaderboard", getLeaderboard);
+router.get("/avatar/:userId", getAvatar);
 router.get("/me", authMiddleware, getCurrentUser);
 router.put("/me", authMiddleware, updateCurrentUser);
 

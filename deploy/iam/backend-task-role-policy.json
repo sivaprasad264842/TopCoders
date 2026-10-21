@@ -1,0 +1,29 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "StartRunnerTasks",
+      "Effect": "Allow",
+      "Action": "ecs:RunTask",
+      "Resource": "arn:aws:ecs:__REGION__:__ACCOUNT_ID__:task-definition/topcoders-runner:*"
+    },
+    {
+      "Sid": "ManageTasksInThisCluster",
+      "Effect": "Allow",
+      "Action": ["ecs:StopTask", "ecs:DescribeTasks", "ecs:ListTasks"],
+      "Resource": "*",
+      "Condition": {
+        "ArnEquals": { "ecs:cluster": "arn:aws:ecs:__REGION__:__ACCOUNT_ID__:cluster/__CLUSTER__" }
+      }
+    },
+    {
+      "Sid": "PassExecutionRoleToRunners",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::__ACCOUNT_ID__:role/ecsTaskExecutionRole",
+      "Condition": {
+        "StringEquals": { "iam:PassedToService": "ecs-tasks.amazonaws.com" }
+      }
+    }
+  ]
+}

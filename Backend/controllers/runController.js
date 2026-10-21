@@ -1,26 +1,9 @@
-import { executeCode } from "../services/executionService.js";
+import { runCode as runOnRunner } from "../services/executionService.js";
+import { parseCodeRequest } from "../utils/validation.js";
 
+/** "Run": execute code against custom input. Nothing is stored. */
 export const runCode = async (req, res) => {
-    try {
-        const { code, language, input } = req.body || {};
-
-        if (!code || !language) {
-            return res.status(400).json({
-                error: "Code and language required",
-            });
-        }
-
-        const result = await executeCode({
-            code,
-            language,
-            input,
-        });
-
-        res.json(result);
-    } catch (err) {
-        console.error("Run Code Error:", err.message);
-        res.status(500).json({
-            error: "Run failed",
-        });
-    }
+    const { code, language, input } = parseCodeRequest(req.body);
+    const result = await runOnRunner(String(req.user._id), { code, language, input });
+    res.json(result);
 };

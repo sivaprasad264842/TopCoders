@@ -1,3 +1,6 @@
+# Local full stack: API + one shared code runner (RUNNER_MODE=static).
+# Usage: copy Backend/.env.example to .env in this folder, fill it in, then
+#   docker compose up --build
 services:
   backend:
     build:
@@ -9,27 +12,33 @@ services:
       - PORT=5000
       - MONGO_URI=${MONGO_URI}
       - JWT_SECRET=${JWT_SECRET}
-      - CLIENT_URL=${CLIENT_URL}
-      - EMAIL_USER=${EMAIL_USER}
-      - EMAIL_PASS=${EMAIL_PASS}
-      - EXECUTION_SERVICE_URL=http://runner:5001/execute
+      - CLIENT_URL=${CLIENT_URL:-http://localhost:5173}
+      - EMAIL_USER=${EMAIL_USER:-}
+      - EMAIL_PASS=${EMAIL_PASS:-}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - RUNNER_MODE=static
+      - RUNNER_URL=http://runner:5001
       - EXECUTION_SERVICE_TOKEN=${EXECUTION_SERVICE_TOKEN}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
     depends_on:
-      - runner
+      runner:
+        condition: service_healthy
 
   runner:
     build:
       context: ./container
+    # Only the backend talks to the runner; bind to localhost for debugging.
     ports:
       - "127.0.0.1:5001:5001"
+    init: true
     environment:
       - NODE_ENV=production
       - PORT=5001
       - TEMP_DIR=/tmp/oj-jobs
       - EXECUTION_SERVICE_TOKEN=${EXECUTION_SERVICE_TOKEN}
     # This container runs untrusted code. Resource limits are mandatory.
+    pids_limit: 256
     deploy:
       resources:
         limits:
