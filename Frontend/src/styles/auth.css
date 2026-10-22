@@ -1,0 +1,347 @@
+/* Sign-in pages: gradient showcase with a judge console, form on the right. */
+
+.auth-page {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    min-height: 100vh;
+    background: var(--surface);
+}
+
+.auth-showcase {
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+    padding: 36px clamp(28px, 5vw, 72px);
+    overflow: hidden;
+    background:
+        radial-gradient(circle at 85% 12%, rgba(245, 176, 74, 0.35), transparent 30%),
+        radial-gradient(circle at 10% 90%, rgba(255, 255, 255, 0.12), transparent 35%),
+        linear-gradient(140deg, #4f5bd5, #7a58e0);
+    color: #fff;
+}
+
+.brand-link.on-color .logo {
+    color: #fff;
+}
+
+.brand-link.on-color .logo-word span {
+    color: #ffe2b0;
+}
+
+.brand-link.on-color .logo-mark rect {
+    fill: rgba(255, 255, 255, 0.16);
+}
+
+.showcase-body {
+    display: grid;
+    gap: 28px;
+    width: min(520px, 100%);
+    margin: auto 0;
+}
+
+.showcase-body h2 {
+    font-size: clamp(26px, 3vw, 36px);
+    line-height: 1.15;
+}
+
+.demo-console {
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 14px;
+    background: #171a2e;
+    box-shadow: 0 30px 60px rgba(20, 16, 60, 0.4);
+}
+
+.demo-bar {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.demo-bar span {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #2f3452;
+}
+
+.demo-bar span:nth-child(1) { background: #f0707f; }
+.demo-bar span:nth-child(2) { background: #f5b04a; }
+.demo-bar span:nth-child(3) { background: #3cc391; }
+
+.demo-bar em {
+    margin-left: 8px;
+    color: #8a90b0;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-style: normal;
+}
+
+.demo-code {
+    margin: 0;
+    padding: 18px 20px 6px;
+    overflow-x: auto;
+    color: #d7dbf2;
+    font-size: 13.5px;
+    line-height: 1.75;
+}
+
+.demo-code .ln {
+    display: block;
+    opacity: 0;
+    animation: type-line 300ms var(--ease) forwards;
+}
+
+.demo-code .ln:nth-child(1) { animation-delay: 150ms; }
+.demo-code .ln:nth-child(2) { animation-delay: 330ms; }
+.demo-code .ln:nth-child(3) { animation-delay: 510ms; }
+.demo-code .ln:nth-child(4) { animation-delay: 690ms; }
+.demo-code .ln:nth-child(5) { animation-delay: 870ms; }
+.demo-code .ln:nth-child(6) { animation-delay: 1050ms; }
+
+@keyframes type-line {
+    from {
+        opacity: 0;
+        transform: translateX(-6px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+.demo-verdict {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px 20px;
+}
+
+/* The chip starts as a squared "Running" block, then becomes a green pill. */
+.verdict-chip {
+    display: inline-grid;
+    padding: 7px 14px;
+    border: 1px solid #3a4066;
+    border-radius: 5px;
+    color: #a9aed0;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 500;
+    animation: chip-accept 500ms var(--ease) 2.1s forwards;
+}
+
+.verdict-chip > span {
+    grid-area: 1 / 1;
+}
+
+.chip-running {
+    animation: chip-hide 200ms linear 2.1s forwards;
+}
+
+.chip-done {
+    opacity: 0;
+    animation: chip-show 300ms var(--ease) 2.25s forwards;
+}
+
+.demo-star {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #f5b04a;
+    font-size: 13px;
+    font-weight: 700;
+    opacity: 0;
+    animation: chip-show 400ms var(--ease) 2.6s forwards;
+}
+
+@keyframes chip-accept {
+    to {
+        border-color: #3cc391;
+        border-radius: 999px;
+        background: rgba(60, 195, 145, 0.16);
+        color: #7fe0b7;
+    }
+}
+
+@keyframes chip-hide {
+    to {
+        opacity: 0;
+    }
+}
+
+@keyframes chip-show {
+    to {
+        opacity: 1;
+    }
+}
+
+.showcase-points {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 14.5px;
+    font-weight: 600;
+}
+
+.showcase-points li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.showcase-points svg {
+    padding: 3px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.18);
+    box-sizing: content-box;
+}
+
+/* ── Form side ────────────────────────────────────────────────────────── */
+
+.auth-main {
+    display: flex;
+    flex-direction: column;
+    padding: 24px clamp(16px, 5vw, 64px);
+}
+
+.auth-top {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.auth-mobile-brand {
+    display: none !important;
+}
+
+.auth-card {
+    display: grid;
+    gap: 18px;
+    width: min(400px, 100%);
+    margin: auto;
+    padding: 32px 0;
+}
+
+.auth-card h1 {
+    font-size: 28px;
+}
+
+.auth-sub {
+    margin-top: -8px;
+    color: var(--text-2);
+}
+
+.auth-form {
+    display: grid;
+    gap: 16px;
+}
+
+.auth-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.quiet-link {
+    color: var(--text-2);
+    font-size: 13.5px;
+    font-weight: 600;
+}
+
+.quiet-link:hover {
+    color: var(--primary);
+}
+
+.auth-footer {
+    padding-top: 12px;
+    color: var(--text-2);
+    font-size: 14px;
+    text-align: center;
+}
+
+.auth-footer a {
+    font-weight: 700;
+}
+
+.auth-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.disclosure {
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+}
+
+.disclosure-toggle {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text-2);
+    font-size: 13.5px;
+}
+
+.disclosure-toggle:hover {
+    color: var(--primary);
+}
+
+.disclosure-body {
+    display: grid;
+    justify-items: start;
+    gap: 10px;
+    margin-top: 10px;
+    color: var(--text-3);
+    font-size: 13.5px;
+    animation: rise-in var(--t) var(--ease);
+}
+
+.sent-card {
+    display: flex;
+    gap: 14px;
+    padding: 16px;
+    border-radius: var(--r);
+    background: var(--surface-2);
+    color: var(--text-2);
+}
+
+.sent-icon {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: var(--primary-wash);
+    color: var(--primary);
+}
+
+.verify-wait {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-2);
+}
+
+@media (max-width: 900px) {
+    .auth-page {
+        grid-template-columns: 1fr;
+    }
+
+    .auth-showcase {
+        display: none;
+    }
+
+    .auth-top {
+        justify-content: space-between;
+    }
+
+    .auth-mobile-brand {
+        display: inline-flex !important;
+    }
+}

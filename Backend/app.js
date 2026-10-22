@@ -4,8 +4,11 @@ import helmet from "helmet";
 import mongoose from "mongoose";
 import authRoutes from "./routes/authRoutes.js";
 import codeRoutes from "./routes/codeRoutes.js";
+import commentRoutes from "./routes/commentRoutes.js";
+import hackathonRoutes from "./routes/hackathonRoutes.js";
 import problemRoutes from "./routes/problemRoutes.js";
 import sessionRoutes from "./routes/sessionRoutes.js";
+import userRoutes from "./routes/userRoutes.js";
 import runnerManager from "./services/runnerManager.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 
@@ -53,6 +56,9 @@ export function createApp() {
     app.use("/api/problems", problemRoutes);
     app.use("/api/code", codeRoutes);
     app.use("/api/session", sessionRoutes);
+    app.use("/api/comments", commentRoutes);
+    app.use("/api/hackathons", hackathonRoutes);
+    app.use("/api/users", userRoutes);
 
     app.use(notFound);
     app.use(errorHandler);

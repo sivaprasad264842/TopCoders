@@ -67,6 +67,27 @@ test("register validates input before touching the database", async () => {
     assert.equal(shortPw.status, 400);
 });
 
+test("register rejects passwords without a letter and a number", async () => {
+    const res = await call("/api/auth/register", { method: "POST", body: { email: "a@b.co", password: "abcdefgh" } });
+    assert.equal(res.status, 400);
+});
+
+test("recovery endpoints validate input before touching the database", async () => {
+    const forgot = await call("/api/auth/forgot-password", { method: "POST", body: { email: "nope" } });
+    assert.equal(forgot.status, 400);
+    const resend = await call("/api/auth/resend-verification", { method: "POST", body: { email: "nope" } });
+    assert.equal(resend.status, 400);
+    const reset = await call("/api/auth/reset-password", { method: "POST", body: { token: "x", password: "short" } });
+    assert.equal(reset.status, 400);
+});
+
+test("password change and sign-out-everywhere require login", async () => {
+    const change = await call("/api/auth/password", { method: "PUT", body: { currentPassword: "a", newPassword: "b" } });
+    assert.equal(change.status, 401);
+    const all = await call("/api/auth/logout-all", { method: "POST" });
+    assert.equal(all.status, 401);
+});
+
 test("login answers 503 (not 500) while the database is down", async () => {
     const res = await call("/api/auth/login", { method: "POST", body: { email: "a@b.co", password: "secret1" } });
     assert.equal(res.status, 503);

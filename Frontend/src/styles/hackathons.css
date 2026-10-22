@@ -1,0 +1,378 @@
+/* Hackathons list and detail pages. */
+
+.hk-hero {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+    padding: 28px 32px;
+    border-radius: var(--r-lg);
+    background:
+        radial-gradient(circle at 92% 20%, rgba(245, 176, 74, 0.28), transparent 32%),
+        linear-gradient(120deg, #4f5bd5, #7a58e0);
+    color: #fff;
+}
+
+.hk-hero h1 {
+    font-size: 30px;
+}
+
+.hk-hero p {
+    max-width: 66ch;
+    margin-top: 8px;
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 15px;
+}
+
+.hk-points {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    margin: 16px 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 13.5px;
+    font-weight: 600;
+}
+
+.hk-points li {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.hk-hero .btn-primary {
+    --btn-bg: #fff;
+    --btn-fg: #3f4ac0;
+    --btn-line: #fff;
+}
+
+.live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: blink 1.4s ease-in-out infinite;
+}
+
+@keyframes blink {
+    50% {
+        opacity: 0.3;
+    }
+}
+
+/* Featured / header card */
+.hk-featured,
+.hk-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 24px;
+    align-items: center;
+    margin-bottom: 24px;
+    padding: 24px 28px;
+}
+
+.hk-featured.live,
+.hk-header.live {
+    border-color: color-mix(in srgb, var(--bad) 35%, var(--line));
+}
+
+.hk-featured-main,
+.hk-header-main {
+    display: grid;
+    justify-items: start;
+    gap: 10px;
+}
+
+.hk-featured-title {
+    color: var(--text);
+    font-size: 24px;
+    font-weight: 800;
+}
+
+.hk-header h1 {
+    font-size: 26px;
+}
+
+.hk-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 22px;
+    color: var(--text-2);
+    font-size: 13.5px;
+}
+
+.hk-facts span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.hk-featured-side,
+.hk-header-side {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    min-width: 230px;
+    padding: 16px 20px;
+    border-radius: var(--r);
+    background: var(--surface-2);
+    text-align: center;
+}
+
+.hk-featured-side .countdown,
+.hk-header-side .countdown {
+    font-size: 26px;
+}
+
+.hk-registered {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+}
+
+.hk-admin {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 14px;
+    color: var(--text-2);
+    font-size: 13.5px;
+    font-weight: 600;
+}
+
+/* Sections */
+.hk-section {
+    margin-top: 28px;
+}
+
+.hk-section h2 {
+    margin-bottom: 12px;
+    font-size: 18px;
+}
+
+.hk-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+.hk-tile {
+    display: grid;
+    justify-items: start;
+    gap: 8px;
+    padding: 18px;
+    color: var(--text);
+    text-decoration: none !important;
+    transition: border-color var(--t-fast), box-shadow var(--t-fast), border-radius var(--t) var(--ease);
+}
+
+.hk-tile:hover {
+    border-color: var(--primary);
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+}
+
+.hk-tile strong {
+    font-size: 16px;
+}
+
+.hk-tile .muted {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
+}
+
+.hk-tile-foot {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.table-card {
+    overflow: auto;
+}
+
+.hk-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.hk-table th {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--text-3);
+    font-size: 12.5px;
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.hk-table td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--line);
+}
+
+.hk-table tr:last-child td {
+    border-bottom: 0;
+}
+
+.hk-name {
+    margin-right: 8px;
+    color: var(--text);
+    font-weight: 600;
+}
+
+.hk-label {
+    color: var(--primary);
+    font-weight: 700;
+}
+
+.hk-tabs {
+    margin-bottom: 18px;
+}
+
+.hk-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 18px;
+    align-items: start;
+}
+
+.hk-rules h2 {
+    margin-bottom: 10px;
+    font-size: 17px;
+}
+
+.hk-desc {
+    color: var(--text-2);
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+
+.hk-scoring h3 {
+    margin-bottom: 8px;
+    font-size: 15px;
+}
+
+.hk-scoring ol {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding-left: 18px;
+    color: var(--text-2);
+    font-size: 13.5px;
+}
+
+.hk-myscore {
+    display: grid;
+    justify-items: center;
+    margin-top: 16px;
+    padding: 14px;
+    border-radius: var(--r);
+    background: var(--primary-wash);
+}
+
+.hk-myscore strong {
+    color: var(--primary);
+    font-size: 30px;
+}
+
+/* Standings */
+.standings-wrap {
+    position: relative;
+}
+
+.standings-note {
+    padding: 10px 14px 0;
+    font-size: 12.5px;
+}
+
+.standings tr.me td {
+    background: var(--primary-wash);
+}
+
+.standings .strong {
+    font-weight: 700;
+}
+
+.standings-user {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.standings-user a {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.cell-col {
+    width: 74px;
+    text-align: center !important;
+}
+
+.cell {
+    display: inline-grid;
+    place-items: center;
+    min-width: 50px;
+    min-height: 28px;
+    padding: 0 6px;
+    border-radius: var(--r-sm);
+    background: var(--surface-2);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.cell.ok {
+    background: var(--ok-wash);
+    color: var(--ok);
+}
+
+.cell.ok small {
+    font-size: 10px;
+    opacity: 0.8;
+}
+
+.cell.bad {
+    background: var(--bad-wash);
+    color: var(--bad);
+}
+
+.link-inline {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+}
+
+@media (max-width: 900px) {
+    .hk-featured,
+    .hk-header,
+    .hk-overview {
+        grid-template-columns: 1fr;
+    }
+
+    .hk-featured-side,
+    .hk-header-side {
+        min-width: 0;
+    }
+
+    .hk-hero {
+        padding: 22px;
+    }
+}

@@ -4,6 +4,8 @@ import User from "../models/User.js";
 import { judgeSubmission } from "../services/executionService.js";
 import { avatarField, avatarUrl } from "../utils/avatar.js";
 import { HttpError } from "../utils/httpError.js";
+import { canViewProblem } from "../utils/problemAccess.js";
+import { starsFor } from "../utils/stars.js";
 import { parseCodeRequest } from "../utils/validation.js";
 
 const VERDICT_BY_STATUS = {
@@ -66,7 +68,7 @@ export const submitCode = async (req, res) => {
     const { code, language } = parseCodeRequest(req.body);
 
     const problem = await Problem.findOne({ problemId }).lean();
-    if (!problem) throw new HttpError(404, "Problem not found.");
+    if (!problem || !(await canViewProblem(problem, req.user))) throw new HttpError(404, "Problem not found.");
     if (!problem.testCases?.length) throw new HttpError(400, "This problem has no test cases yet.");
 
     const userId = req.user._id;
@@ -95,8 +97,16 @@ export const submitCode = async (req, res) => {
         failedTestCase,
     });
 
+    // First accepted solution only: the filter makes this atomic, so two
+    // parallel Accepted submissions can't award stars twice.
+    let starsEarned = 0;
     if (verdict === "Accepted") {
-        await User.updateOne({ _id: userId }, { $addToSet: { solvedProblems: problemId } });
+        const stars = starsFor(problem.difficulty);
+        const first = await User.updateOne(
+            { _id: userId, solvedProblems: { $ne: problemId } },
+            { $addToSet: { solvedProblems: problemId }, $inc: { stars } },
+        );
+        if (first.modifiedCount) starsEarned = stars;
     }
 
     res.json({
@@ -106,6 +116,7 @@ export const submitCode = async (req, res) => {
         totalTestCases: problem.testCases.length,
         failedTestCase,
         submissionId: submission._id,
+        starsEarned,
     });
 };
 

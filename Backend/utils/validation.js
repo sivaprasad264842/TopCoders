@@ -10,6 +10,9 @@ export const LIMITS = {
     hints: 10,
     titleChars: 150,
     statementChars: 20_000,
+    tags: 8,
+    tagChars: 30,
+    editorialChars: 20_000,
 };
 
 const bytes = (value) => Buffer.byteLength(value, "utf8");
@@ -65,4 +68,19 @@ export function parseHints(raw) {
             body: String(hint?.body || "").trim().slice(0, 2000),
         }))
         .filter((hint) => hint.body);
+}
+
+/** Topic tags: up to 8, trimmed, de-duplicated case-insensitively. */
+export function parseTags(raw) {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set();
+    const tags = [];
+    for (const value of raw) {
+        const tag = String(value ?? "").trim().replace(/\s+/g, " ").slice(0, LIMITS.tagChars);
+        if (!tag || seen.has(tag.toLowerCase())) continue;
+        seen.add(tag.toLowerCase());
+        tags.push(tag);
+        if (tags.length === LIMITS.tags) break;
+    }
+    return tags;
 }

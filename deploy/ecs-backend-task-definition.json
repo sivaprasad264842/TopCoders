@@ -26,7 +26,8 @@
         { "name": "RUNNER_ASSIGN_PUBLIC_IP",  "value": "ENABLED" },
         { "name": "RUNNER_CAPACITY_PROVIDER", "value": "__CAPACITY_PROVIDER__" },
         { "name": "SESSION_IDLE_TIMEOUT_MIN", "value": "10" },
-        { "name": "MAX_ACTIVE_RUNNERS",       "value": "__MAX_RUNNERS__" }
+        { "name": "MAX_ACTIVE_RUNNERS",       "value": "__MAX_RUNNERS__" },
+        { "name": "ADMIN_EMAILS",             "value": "__ADMIN_EMAILS__" }
       ],
       "secrets": [
         { "name": "MONGO_URI",               "valueFrom": "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/topcoders/MONGO_URI" },
