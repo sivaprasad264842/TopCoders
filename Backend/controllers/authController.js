@@ -1,14 +1,19 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import PendingUser from "../models/PendingUser.js";
 import User from "../models/User.js";
 import { avatarField, avatarUrl, decodeDataUrl } from "../utils/avatar.js";
 import sendEmail from "../utils/sendEmail.js";
+import { signToken } from "../middleware/authMiddleware.js";
+import { isAdmin } from "../utils/roles.js";
+import { badgesFor } from "../utils/stars.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VERIFY_TTL_MS = 30 * 60_000;
+const RESET_TTL_MS = 30 * 60_000;
+const PASSWORD_MIN = 8;
+const PASSWORD_MAX = 128;
 const BCRYPT_ROUNDS = 10;
 // Compared against when the email is unknown, so login takes the same time
 // whether or not an account exists (prevents account enumeration by timing).
@@ -35,8 +40,31 @@ const toProfile = (user) => ({
     phone: user.phone || "",
     resume: user.resume || "",
     solvedProblems: user.solvedProblems || [],
+    stars: user.stars || 0,
+    badges: badgesFor(user.stars || 0),
+    isAdmin: isAdmin(user),
     createdAt: user.createdAt,
 });
+
+/** Returns an error message, or "" when the password is acceptable. */
+const checkPassword = (password) => {
+    if (password.length < PASSWORD_MIN || password.length > PASSWORD_MAX) {
+        return `Password must be ${PASSWORD_MIN} to ${PASSWORD_MAX} characters.`;
+    }
+    if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+        return "Password must include at least one letter and one number.";
+    }
+    return "";
+};
+
+/** Branded email with one call-to-action button. */
+const actionEmail = ({ heading, body, buttonText, link, footer }) => `
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:auto;padding:24px;color:#14213d">
+  <h2 style="margin:0 0 12px">${heading}</h2>
+  <p style="line-height:1.5">${body}</p>
+  <p style="margin:24px 0"><a href="${link}" style="background:#b8862b;color:#fff;padding:11px 20px;border-radius:999px;text-decoration:none;font-weight:bold">${buttonText}</a></p>
+  <p style="color:#5b6b82;font-size:13px;line-height:1.5">${footer}</p>
+</div>`;
 
 const uniqueUsername = async (requested) => {
     const base = String(requested || "user").trim().slice(0, 32) || "user";
@@ -57,9 +85,8 @@ export const registerUser = async (req, res) => {
     if (!EMAIL_RE.test(email) || email.length > 254) {
         return res.status(400).json({ error: "Enter a valid email address." });
     }
-    if (password.length < 6 || password.length > 128) {
-        return res.status(400).json({ error: "Password must be 6 to 128 characters." });
-    }
+    const passwordError = checkPassword(password);
+    if (passwordError) return res.status(400).json({ error: passwordError });
     if (await User.exists(emailQuery(email))) {
         return res.status(409).json({ error: "An account with this email already exists." });
     }
@@ -86,10 +113,13 @@ export const registerUser = async (req, res) => {
             to: normalizedEmail,
             subject: "Verify your TopCoders account",
             text: `Welcome to TopCoders! Verify your account (link valid for 30 minutes): ${link}`,
-            html: `<h2>Welcome to TopCoders</h2>
-                <p>Click the button below to verify your account. The link is valid for 30 minutes.</p>
-                <p><a href="${link}" style="background:#2563eb;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Verify account</a></p>
-                <p>If you did not sign up, you can ignore this email.</p>`,
+            html: actionEmail({
+                heading: "Welcome to TopCoders",
+                body: "Confirm your email to activate your account. The link is valid for 30 minutes.",
+                buttonText: "Verify account",
+                link,
+                footer: "If you did not sign up, you can ignore this email.",
+            }),
         });
     } catch (err) {
         console.error("Register email error:", err.message);
@@ -149,10 +179,140 @@ export const loginUser = async (req, res) => {
         return res.status(401).json({ error: "Invalid email or password." });
     }
 
-    const token = jwt.sign({ id: String(user._id) }, process.env.JWT_SECRET, { expiresIn: "7d" });
-
-    res.json({ token, userId: user._id, email: user.email, username: user.username });
+    res.json({ token: signToken(user), userId: user._id, email: user.email, username: user.username });
 };
+
+// ---------------------------------------------------------------------------
+// Account recovery and security
+
+const GENERIC_RESET_REPLY = {
+    message: "If an account exists for that email, a reset link is on its way. Check your inbox (and spam folder).",
+};
+
+/** Emails a single-use reset link. Same reply whether or not the account exists. */
+export const forgotPassword = async (req, res) => {
+    const email = String(req.body?.email || "").trim();
+    if (!EMAIL_RE.test(email)) return res.status(400).json({ error: "Enter a valid email address." });
+
+    const user = await User.findOne(emailQuery(email));
+    if (!user) return res.json(GENERIC_RESET_REPLY);
+
+    const token = crypto.randomBytes(32).toString("hex");
+    user.resetTokenHash = sha256(token);
+    user.resetExpiresAt = new Date(Date.now() + RESET_TTL_MS);
+    await user.save();
+
+    const link = `${appUrl()}/reset-password/${token}`;
+    try {
+        await sendEmail({
+            to: user.email,
+            subject: "Reset your TopCoders password",
+            text: `Reset your TopCoders password (link valid for 30 minutes): ${link}`,
+            html: actionEmail({
+                heading: "Reset your password",
+                body: "Someone asked to reset the password for your TopCoders account. The link is valid for 30 minutes and works once.",
+                buttonText: "Choose a new password",
+                link,
+                footer: "If this wasn't you, ignore this email. Your password stays the same.",
+            }),
+        });
+    } catch (err) {
+        console.error("Reset email error:", err.message);
+        return res.status(502).json({ error: "Could not send the reset email. Please try again." });
+    }
+
+    res.json(GENERIC_RESET_REPLY);
+};
+
+/** Sets a new password from a valid reset link and signs out every device. */
+export const resetPassword = async (req, res) => {
+    const token = String(req.body?.token || "");
+    const password = String(req.body?.password || "");
+
+    const passwordError = checkPassword(password);
+    if (passwordError) return res.status(400).json({ error: passwordError });
+
+    const user = token ? await User.findOne({ resetTokenHash: sha256(token) }) : null;
+    if (!user || !user.resetExpiresAt || user.resetExpiresAt.getTime() < Date.now()) {
+        return res.status(400).json({
+            error: "This reset link is invalid or has expired. Request a new one.",
+            code: "INVALID_TOKEN",
+        });
+    }
+
+    user.password = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    user.resetTokenHash = undefined;
+    user.resetExpiresAt = undefined;
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    await user.save();
+
+    res.json({ message: "Password updated. Log in with your new password." });
+};
+
+/** Sends a fresh verification link to a sign-up that has not been verified yet. */
+export const resendVerification = async (req, res) => {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) return res.status(400).json({ error: "Enter a valid email address." });
+    const reply = { message: "If that email is waiting for verification, a new link is on its way." };
+
+    const pending = await PendingUser.findOne({ email });
+    if (!pending) return res.json(reply);
+
+    const token = crypto.randomBytes(32).toString("hex");
+    pending.tokenHash = sha256(token);
+    pending.expiresAt = new Date(Date.now() + VERIFY_TTL_MS);
+    await pending.save();
+
+    const link = `${appUrl()}/verify/${token}`;
+    try {
+        await sendEmail({
+            to: email,
+            subject: "Your new TopCoders verification link",
+            text: `Verify your TopCoders account (link valid for 30 minutes): ${link}`,
+            html: actionEmail({
+                heading: "Verify your account",
+                body: "Here is a new verification link. It is valid for 30 minutes.",
+                buttonText: "Verify account",
+                link,
+                footer: "If you did not sign up, you can ignore this email.",
+            }),
+        });
+    } catch (err) {
+        console.error("Resend verification error:", err.message);
+        return res.status(502).json({ error: "Could not send the email. Please try again." });
+    }
+
+    res.json(reply);
+};
+
+/** Changes the password (current one required). Other devices are signed out; this one gets a new token. */
+export const changePassword = async (req, res) => {
+    const currentPassword = String(req.body?.currentPassword || "");
+    const newPassword = String(req.body?.newPassword || "");
+
+    const user = await User.findById(req.user._id);
+    if (!user || !(await bcrypt.compare(currentPassword, user.password))) {
+        return res.status(400).json({ error: "Current password is incorrect." });
+    }
+    const passwordError = checkPassword(newPassword);
+    if (passwordError) return res.status(400).json({ error: passwordError });
+    if (await bcrypt.compare(newPassword, user.password)) {
+        return res.status(400).json({ error: "Choose a password different from the current one." });
+    }
+
+    user.password = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    await user.save();
+
+    res.json({ message: "Password changed. Other devices were signed out.", token: signToken(user) });
+};
+
+/** Ends every session of this account, including the current one. */
+export const logoutAll = async (req, res) => {
+    await User.updateOne({ _id: req.user._id }, { $inc: { tokenVersion: 1 } });
+    res.json({ message: "Signed out on all devices." });
+};
+
 
 // ---------------------------------------------------------------------------
 
@@ -211,7 +371,7 @@ export const updateCurrentUser = async (req, res) => {
     res.json(toProfile(user));
 };
 
-/** Public: top 50 users by solved count. Emails and phone numbers are never exposed. */
+/** Public: top 100 users by stars, then problems solved. Emails and phone numbers are never exposed. */
 export const getLeaderboard = async (req, res) => {
     const users = await User.aggregate([
         {
@@ -222,11 +382,12 @@ export const getLeaderboard = async (req, res) => {
                 socialLinks: 1,
                 resume: 1,
                 updatedAt: 1,
+                stars: { $ifNull: ["$stars", 0] },
                 solvedCount: { $size: { $ifNull: ["$solvedProblems", []] } },
             },
         },
-        { $sort: { solvedCount: -1, username: 1 } },
-        { $limit: 50 },
+        { $sort: { stars: -1, solvedCount: -1, username: 1 } },
+        { $limit: 100 },
     ]);
 
     res.json(
@@ -239,6 +400,8 @@ export const getLeaderboard = async (req, res) => {
             socialLinks: user.socialLinks || {},
             resume: user.resume || "",
             solvedCount: user.solvedCount,
+            stars: user.stars,
+            badges: badgesFor(user.stars).map((b) => b.id),
         })),
     );
 };

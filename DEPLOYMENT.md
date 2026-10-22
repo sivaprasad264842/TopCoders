@@ -1,6 +1,6 @@
 # Deployment — TopCoders on AWS
 
-Region `ap-south-1` (Mumbai). Frontend on Netlify, API on ECS Fargate behind an ALB, one runner task per active user.
+Region **`ap-southeast-2` (Sydney)** for the current account. Accounts created through the AWS "Idea Launchpad" sign-up have an organization policy that only allows Sydney, so every command below passes `-Region ap-southeast-2` (the scripts default to `ap-south-1`). Frontend on Netlify, DNS on Cloudflare, API on ECS Fargate behind an ALB, one runner task per active user.
 
 ```
 Browser ──► Netlify (topcoders.online)
@@ -16,14 +16,16 @@ All scripts are PowerShell (Windows PowerShell 5.1 or PowerShell 7), idempotent,
 
 1. Install **AWS CLI v2**, **Docker Desktop**, **Node 22**, **Git**.
 2. In the new AWS account: IAM → Users → Create user `topcoders-deploy`, attach `AdministratorAccess` for the first setup (afterwards you can switch to `deploy/iam/deployer-policy.json`), then create an access key (CLI).
-3. `aws configure --profile topcoders-new` (region `ap-south-1`, output `json`).
+3. `aws configure --profile topcoders-new` (region `ap-southeast-2`, output `json`). Check with `aws sts get-caller-identity --profile topcoders-new`.
 4. Set a **billing alarm**: Billing → Budgets → Create budget → monthly cost budget, e.g. $10, with email alerts.
 
 ## 1. Bootstrap the account (once)
 
 ```powershell
-.\deploy\setup-aws.ps1 -AwsProfile topcoders-new
+.\deploy\setup-aws.ps1 -AwsProfile topcoders-new -Region ap-southeast-2
 ```
+
+If it fails with `explicit deny in a service control policy`, the account sits in an AWS Organization that blocks the service or region. Use a region the policy allows, or have the organization owner detach the policy.
 
 This creates the IAM roles, log group, ECR repository, ECS cluster (Fargate + Fargate Spot), three security groups, target group and ALB. It saves the IDs to `deploy/aws-config.json` (gitignored).
 
@@ -36,11 +38,13 @@ This creates the IAM roles, log group, ECR repository, ECS cluster (Fargate + Fa
 ## 2. Secrets (once, and whenever one changes)
 
 ```powershell
-.\deploy\create-ssm-parameters.ps1 -AwsProfile topcoders-new `
+.\deploy\create-ssm-parameters.ps1 -AwsProfile topcoders-new -Region ap-southeast-2 `
     -MongoUri "mongodb+srv://USER:PASS@cluster0.xxxxx.mongodb.net/topcoders" `
     -ResendApiKey "re_..." `
     -OpenAiApiKey "sk-..."
 ```
+
+Use the real values, not the placeholders. If the MongoDB password contains `@`, `:` or `/`, URL-encode it (`@` becomes `%40`). After changing a secret, restart the backend: `aws ecs update-service --cluster topcoders --service topcoders-backend --force-new-deployment --profile topcoders-new --region ap-southeast-2`.
 
 `JWT_SECRET` and `EXECUTION_SERVICE_TOKEN` are generated automatically. Treat the old account's values as compromised. Features you skip are stored as `disabled`.
 
@@ -56,15 +60,22 @@ This builds both images (tagged `backend-<time>-<git sha>` / `runner-<time>-<git
 
 Useful flags: `-SkipBuild` (config-only change, reuses current images), `-ClientUrl "..."`, `-RunnerCapacityProvider FARGATE_SPOT`, `-MaxRunners 10`.
 
+**Admins** (schedule hackathons, edit any problem, delete any comment): pass your account email once with `-AdminEmails "you@example.com"` (comma-separated for several). Later deploys keep the same admins unless you pass the flag again.
+
 ## 4. Domain and HTTPS (once)
 
 1. Test over HTTP first: `curl http://<LoadBalancerDns>/health` (DNS name is in `deploy/aws-config.json`).
-2. ACM (region **ap-south-1**) → Request public certificate → `api.topcoders.online` → DNS validation. Add the CNAME it shows in GoDaddy and wait for **Issued**.
+2. Request the certificate **in the same account and region as the ALB**. The browser console may be signed in to the organization's management account, so the CLI is safer:
+   ```powershell
+   aws acm request-certificate --domain-name api.topcoders.online --validation-method DNS --profile topcoders-new --region ap-southeast-2
+   aws acm describe-certificate --certificate-arn <arn> --profile topcoders-new --region ap-southeast-2 --query "Certificate.DomainValidationOptions[0].ResourceRecord"
+   ```
+   Add that CNAME in Cloudflare (DNS only, not proxied) and wait for **ISSUED**.
 3. Add HTTPS and redirect HTTP:
    ```powershell
-   .\deploy\setup-aws.ps1 -AwsProfile topcoders-new -CertificateArn arn:aws:acm:ap-south-1:...:certificate/...
+   .\deploy\setup-aws.ps1 -AwsProfile topcoders-new -Region ap-southeast-2 -CertificateArn arn:aws:acm:ap-southeast-2:...:certificate/...
    ```
-4. GoDaddy DNS: `CNAME  api  →  <LoadBalancerDns>` (TTL 600).
+4. Cloudflare DNS: `CNAME  api  →  <LoadBalancerDns>`, proxy status **DNS only**.
 5. `curl https://api.topcoders.online/health` returns `{"ok":true,...,"runners":{"mode":"ecs",...}}`.
 
 ## 5. Frontend (Netlify)
@@ -85,9 +96,9 @@ Site settings → Environment variables → `VITE_API_URL=https://api.topcoders.
 ## Operations
 
 ```powershell
-aws logs tail /ecs/topcoders --follow --profile topcoders-new
-aws ecs list-tasks --cluster topcoders --profile topcoders-new
-aws ecs stop-task --cluster topcoders --task <arn> --profile topcoders-new
+aws logs tail /ecs/topcoders --follow --profile topcoders-new --region ap-southeast-2
+aws ecs list-tasks --cluster topcoders --profile topcoders-new --region ap-southeast-2
+aws ecs stop-task --cluster topcoders --task <arn> --profile topcoders-new --region ap-southeast-2
 .\deploy\deploy.ps1 -SkipBuild -ClientUrl "https://topcoders.online,https://www.topcoders.online"
 ```
 

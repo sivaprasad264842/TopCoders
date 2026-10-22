@@ -4,7 +4,7 @@
 
 **Live:** [topcoders.online](https://topcoders.online) · **API:** `api.topcoders.online`
 
-TopCoders is a full-stack competitive-programming judge (like LeetCode or Codeforces). Users solve problems in C++, Java, Python or JavaScript in a browser IDE, get judged against hidden test cases, climb leaderboards, and can ask an AI reviewer for hints.
+TopCoders is a full-stack competitive-programming platform (in the spirit of LeetCode). Users solve problems in C++, Java, Python or JavaScript in a browser IDE, get judged against hidden test cases, earn stars and badges, discuss problems, compete in monthly hackathons with live standings, and can ask an AI reviewer for hints.
 
 The core engineering problem: **untrusted user code must run in isolation, and an always-on sandbox server costs money even when no one is online.** TopCoders gives every active user a **private, short-lived sandbox on AWS Fargate**. It starts when the user opens a problem and stops when they leave or go idle, so compute is billed only while someone is actually coding.
 
@@ -15,11 +15,19 @@ The core engineering problem: **untrusted user code must run in isolation, and a
 - **Browser IDE**: Monaco editor (the VS Code engine) with per-language drafts and custom input
 - **Judge**: compiles once, runs every test case, stops at the first failure. Verdicts: Accepted / Wrong Answer / TLE / Runtime Error / Compilation Error
 - **Hidden test cases**: authors mark tests hidden. Their input, expected output and even stderr never reach solvers
-- **Problem authoring**: create, edit and delete problems with test cases and progressive hints (only the author can edit)
-- **Leaderboards**: global (problems solved) and per-problem (accepted count, then fastest run)
+- **Problem set**: topic tags with counts, acceptance rates, difficulty and status filters, sorting, pagination, "pick one" random problem, and a daily problem
+- **Problem authoring**: create, edit and delete problems with topic tags, visible and hidden test cases, progressive hints and an editorial (author or admin can edit)
+- **Editorials**: a write-up of the intended solution, locked behind a "reveal" until you solve the problem
+- **Comments**: discussion on every problem with replies, upvotes, Top/Newest sorting, editing and deleting (soft delete keeps threads readable)
+- **Stars and badges**: Easy 1, Medium 2, Hard 3 stars for each first solve, awarded atomically so they can't be earned twice; six badge levels
+- **Monthly hackathons**: admins schedule timed contests (with a next-month preset); users register, problems stay hidden until the start and are open only to registered users while live, live standings by points then penalty time (5 min per wrong attempt), problems become public practice after the event
+- **Leaderboards**: global (stars, then problems solved) with a top-3 podium, and per-problem (accepted count, then fastest run)
+- **Public profiles**: rank, stars, badges, solved by difficulty, a yearly activity calendar, recent accepted solutions and hackathon history
 - **AI code review**: OpenAI explains bugs, complexity and edge cases, and gives hints rather than full answers
-- **Auth**: email verification (hashed single-use tokens), bcrypt passwords, JWT sessions, timing-safe login
-- **Profiles**: photo upload, bio and social links. Email and phone are never public
+- **Auth**: email verification with resend, password reset by email, change password, "sign out of all devices" (token versioning revokes every JWT at once), "keep me logged in", show/hide password, strength meter, Caps Lock warning, session-expiry redirect
+- **Interface**: light theme by default with an optional dark theme, full-width layout with a sidebar (daily problem, progress, next hackathon, top coders), custom TC logo, keyboard shortcuts (`/` search, `Ctrl+Enter` run, `Ctrl+Shift+Enter` submit), drafts saved per problem and language, toasts and confirm dialogs, responsive down to phone width
+- **Profiles and settings**: photo upload, bio, social and resume links. Email and phone are never public
+- **Admin role**: from `ADMIN_EMAILS` or the user's `role`; admins manage hackathons and can edit any problem or delete any comment
 
 ## Architecture
 
@@ -87,7 +95,7 @@ sequenceDiagram
 | Frontend | React 19, Vite 8, React Router 7, Monaco Editor, Axios, ESLint |
 | Backend | Node.js 22, Express 5, Mongoose 9 / MongoDB Atlas, JWT, bcrypt, Helmet, express-rate-limit, AWS SDK v3 (ECS), OpenAI SDK, Resend / Nodemailer |
 | Code runner | Node.js 22 + g++ (C++17), OpenJDK 17, Python 3, Node; `prlimit`; FIFO job semaphore |
-| Cloud | AWS ECS Fargate (+ Spot), ECR, Application Load Balancer, ACM (TLS), SSM Parameter Store, IAM, CloudWatch Logs, VPC security groups; Netlify; GoDaddy DNS |
+| Cloud | AWS ECS Fargate (+ Spot), ECR, Application Load Balancer, ACM (TLS), SSM Parameter Store, IAM, CloudWatch Logs, VPC security groups, AWS Organizations (SCPs); Netlify; Cloudflare DNS |
 | DevOps | Docker, Docker Compose, PowerShell + AWS CLI automation, GitHub Actions CI |
 | Testing | `node:test` unit tests with a fake ECS client, HTTP API tests, full-stack E2E against MongoDB + the real runner image, runner smoke suite |
 
@@ -101,14 +109,20 @@ Backend/
   services/executionService.js  calls the runner, maps failures to 503s
   controllers/            auth, problems, run, submit/judge, AI analysis, session
   middleware/             JWT auth, ownership check, rate limits, error handler
-  models/                 User, PendingUser (TTL), Problem, Submission (indexed)
+  models/                 User, PendingUser (TTL), Problem, Submission, Comment, Hackathon, HackathonRegistration
+  scripts/seed.js         demo data for a local database (npm run seed)
   test/                   unit, API and end-to-end tests
 container/
   server.js               runner HTTP API: /execute, /execute-batch, /ping, /health
   lib/                    languages, process sandbox, judge, semaphore
 Frontend/src/
-  components/             Home, ProblemPage (IDE), ProblemFormModal, auth pages
-  hooks/useRunnerSession.js   heartbeat + tab-close beacon
+  pages/                  ProblemsPage, ProblemPage (IDE), HackathonsPage, HackathonPage, LeaderboardPage,
+                          ProfilePage, SettingsPage
+  components/             AppHeader, UserMenu, ProblemRow, ProblemFormModal, HackathonFormModal, Comments,
+                          AccountForms, auth pages
+  hooks/                  useRunnerSession (heartbeat + tab-close beacon), useAuth, useMe, useTheme, useSignOut
+  ui/                     Logo, Feedback (toasts + confirm), Segmented, TagInput, Icon set, small helpers
+  styles/                 theme.css design tokens, page styles
 deploy/
   setup-aws.ps1           one-time AWS account bootstrap (IAM, ECR, ECS, SGs, ALB)
   create-ssm-parameters.ps1   encrypted secrets
@@ -125,6 +139,7 @@ cd container && npm ci && npm run docker:build && npm run docker:run
 
 # 2. Backend (new terminal)
 cd Backend && npm ci && cp .env.example .env   # set MONGO_URI and JWT_SECRET
+npm run seed                                   # optional: demo users, problems, comments, hackathons
 npm run dev                                    # http://localhost:5000
 
 # 3. Frontend (new terminal)
@@ -159,9 +174,21 @@ See **[DEPLOYMENT.md](DEPLOYMENT.md)**. Short version:
 |---|---|---|---|
 | POST | `/api/auth/register` · `/login` | – | Sign up (email verification) / get JWT |
 | GET | `/api/auth/verify/:token` | – | Verify email (single use, 30 min) |
+| POST | `/api/auth/resend-verification` | – | New verification link |
+| POST | `/api/auth/forgot-password` · `/reset-password` | – | Email a reset link / set a new password (signs out every device) |
+| PUT | `/api/auth/password` | JWT | Change password (other devices signed out) |
+| POST | `/api/auth/logout-all` | JWT | Sign out of all devices |
 | GET/PUT | `/api/auth/me` | JWT | Own profile |
 | GET | `/api/auth/leaderboard` · `/avatar/:userId` | – | Global ranking / profile photo |
-| GET | `/api/problems/all` · `/:id` | optional | List / view (authors also see hidden tests) |
+| GET | `/api/problems/all` · `/:id` | optional | List with acceptance stats / view (editors also see hidden tests) |
+| GET | `/api/problems/tags` · `/daily` | – | Topic tags with counts / problem of the day |
+| GET/POST | `/api/problems/:id/comments` | optional / JWT | List threads (Top or Newest) / comment or reply |
+| PUT/DELETE | `/api/comments/:id` | JWT + author (admin may delete) | Edit / delete a comment |
+| POST | `/api/comments/:id/vote` | JWT | Toggle upvote |
+| GET | `/api/hackathons` · `/:slug` · `/:slug/standings` | optional | List / details / live standings |
+| POST/DELETE | `/api/hackathons/:slug/register` | JWT | Register / unregister (before start) |
+| POST/PUT/DELETE | `/api/hackathons` · `/:slug` | admin | Schedule / edit / delete a hackathon |
+| GET | `/api/users/:username` | – | Public profile: stars, badges, calendar, recent solves |
 | POST/PUT/DELETE | `/api/problems/create` · `/:id` | JWT + owner | Author problems |
 | POST | `/api/code/run` · `/submit` | JWT | Run on custom input / judge a submission |
 | POST | `/api/code/analyze` | JWT | AI review |
@@ -173,5 +200,6 @@ See **[DEPLOYMENT.md](DEPLOYMENT.md)**. Short version:
 - Move runner sessions to Redis/DynamoDB so the API can run more than one instance
 - Stronger isolation for untrusted code (gVisor / Firecracker microVMs, no outbound network)
 - Warm pool of 1–2 pre-started runners to remove the ~30–60 s cold start
-- Contests with live scoreboards over WebSockets
+- Push standings over WebSockets instead of 30-second polling
+- Problem lists (study plans), bookmarks and solution sharing
 - Infrastructure as code (Terraform / AWS CDK) instead of scripts

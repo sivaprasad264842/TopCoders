@@ -1,9 +1,0 @@
-.auth-container {
-    min-height: 100vh;
-    display: grid;
-    place-items: center;
-    padding: 20px;
-    background:
-        radial-gradient(circle at bottom right, rgba(47, 111, 115, 0.2), transparent 30rem),
-        #0d1117;
-}

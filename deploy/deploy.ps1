@@ -26,6 +26,9 @@ param(
     [int]$MaxRunners = 10,
     [int]$DesiredCount = 1,
     [string]$ServiceName = "topcoders-backend",
+    # Comma-separated emails that get admin rights (create hackathons, moderate).
+    # Omit to keep the value from the currently deployed task definition.
+    [string]$AdminEmails = $null,
     [switch]$SkipBuild,
     [switch]$NoWait
 )
@@ -82,6 +85,14 @@ Write-Ok "runner:  $RunnerImage"
 
 # ── 2. Task definitions ──────────────────────────────────────────────────────
 Write-Step "Registering task definitions"
+if ($null -eq $AdminEmails) {
+    # Keep whatever admins the running backend already has.
+    $AdminEmails = & aws ecs describe-task-definition --task-definition topcoders-backend `
+        --query "taskDefinition.containerDefinitions[0].environment[?name=='ADMIN_EMAILS'].value | [0]" --output text 2>$null
+    if ($LASTEXITCODE -ne 0 -or (Test-Empty $AdminEmails)) { $AdminEmails = "" }
+}
+$AdminEmails = "$AdminEmails".Trim()
+Write-Ok "admins: $(if ($AdminEmails) { $AdminEmails } else { '(none: pass -AdminEmails you@example.com)' })"
 $common = @{ ACCOUNT_ID = $AccountId; REGION = $Region }
 
 $runnerFile = New-RenderedFile (Join-Path $PSScriptRoot "ecs-runner-task-definition.json") ($common + @{
@@ -99,6 +110,7 @@ $backendFile = New-RenderedFile (Join-Path $PSScriptRoot "ecs-backend-task-defin
     RUNNER_SG         = $config.RunnerSecurityGroupId
     CAPACITY_PROVIDER = $RunnerCapacityProvider
     MAX_RUNNERS       = $MaxRunners
+    ADMIN_EMAILS      = $AdminEmails
 })
 $backendArn = Invoke-Aws ecs register-task-definition --cli-input-json (ConvertTo-FileUri $backendFile) `
     --query "taskDefinition.taskDefinitionArn" --output text

@@ -1,131 +1,167 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import API, { getErrorMessage } from "../api";
-import "../CSS/Register.css";
+import { Link, Navigate } from "react-router-dom";
+import { getErrorMessage, register, resendVerification } from "../api";
+import { useAuth } from "../hooks/useAuth";
+import { useFeedback } from "../ui/Feedback";
+import Icon from "../ui/Icon";
+import AuthLayout from "./auth/AuthLayout";
+import { PasswordField, PasswordStrength, passwordProblem } from "./auth/PasswordField";
 
 function Register() {
-    const [email, setEmail] = useState("");
-    const [username, setUsername] = useState("");
-    const [password, setPassword] = useState("");
-    const [confirmPassword, setConfirmPassword] = useState("");
+    const { isLoggedIn } = useAuth();
+    const { toast } = useFeedback();
+
+    const [form, setForm] = useState({ email: "", username: "", password: "", confirm: "" });
     const [loading, setLoading] = useState(false);
-    const [message, setMessage] = useState({ text: "", type: "" });
+    const [error, setError] = useState("");
+    const [sentTo, setSentTo] = useState("");
+    const [resending, setResending] = useState(false);
+
+    if (isLoggedIn) return <Navigate to="/" replace />;
+
+    const set = (field) => (value) => setForm((f) => ({ ...f, [field]: value }));
+    const mismatch = form.confirm.length > 0 && form.confirm !== form.password;
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setMessage({ text: "", type: "" });
+        setError("");
 
-        
-        if (password !== confirmPassword) {
-            setMessage({ text: "Passwords do not match", type: "error" });
-            return;
-        }
-
-        if (password.length < 6) {
-            setMessage({
-                text: "Password must be at least 6 characters",
-                type: "error",
-            });
-            return;
-        }
+        const problem = passwordProblem(form.password);
+        if (problem) return setError(problem);
+        if (form.password !== form.confirm) return setError("Passwords don't match.");
 
         setLoading(true);
-
         try {
-            const res = await API.post("/auth/register", {
-                email,
-                username,
-                password,
-            });
-
-            setMessage({
-                text: res.data.message || "Verification email sent",
-                type: "success",
-            });
-
-            // clear fields
-            setEmail("");
-            setUsername("");
-            setPassword("");
-            setConfirmPassword("");
+            await register({ email: form.email.trim(), username: form.username.trim(), password: form.password });
+            setSentTo(form.email.trim());
         } catch (err) {
-            setMessage({
-                text: getErrorMessage(err, "Registration failed. Please try again."),
-                type: "error",
-            });
+            setError(getErrorMessage(err, "Registration failed. Please try again."));
         } finally {
             setLoading(false);
         }
     };
 
-    return (
-        <div className="auth-container">
-            <div className="auth-box">
-                <h2>Create Account</h2>
+    const handleResend = async () => {
+        setResending(true);
+        try {
+            const { data } = await resendVerification(sentTo);
+            toast(data.message, "info");
+        } catch (err) {
+            toast(getErrorMessage(err, "Could not send the email."), "error");
+        } finally {
+            setResending(false);
+        }
+    };
 
-                {message.text && (
-                    <div className={`message ${message.type}`}>
-                        {message.text}
-                    </div>
-                )}
-
-                <form onSubmit={handleSubmit}>
-                    <div className="input-box">
-                        <input
-                            type="email"
-                            required
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder=" "
-                        />
-                        <label>Email</label>
-                    </div>
-
-                    <div className="input-box">
-                        <input
-                            type="text"
-                            required
-                            value={username}
-                            onChange={(e) => setUsername(e.target.value)}
-                            placeholder=" "
-                        />
-                        <label>User name</label>
-                    </div>
-
-                    <div className="input-box">
-                        <input
-                            type="password"
-                            required
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            placeholder=" "
-                        />
-                        <label>Password</label>
-                    </div>
-
-                    <div className="input-box">
-                        <input
-                            type="password"
-                            required
-                            value={confirmPassword}
-                            onChange={(e) => setConfirmPassword(e.target.value)}
-                            placeholder=" "
-                        />
-                        <label>Confirm Password</label>
-                    </div>
-
-                    <button type="submit" disabled={loading}>
-                        {loading ? "Sending..." : "Register"}
-                    </button>
-                </form>
-
-                <div className="auth-link">
+    if (sentTo) {
+        return (
+            <AuthLayout
+                title="Check your inbox"
+                footer={
+                    <>
+                        Already verified? <Link to="/login">Log in</Link>
+                    </>
+                }
+            >
+                <div className="sent-card">
+                    <span className="sent-icon">
+                        <Icon name="mail" size={22} />
+                    </span>
                     <p>
-                        Already have an account? <Link to="/login">Login</Link>
+                        We sent a verification link to <strong>{sentTo}</strong>. Open it within 30 minutes to activate
+                        your account. Check the spam folder if it isn't there.
                     </p>
                 </div>
-            </div>
-        </div>
+                <div className="auth-actions">
+                    <button className="btn btn-ghost" onClick={handleResend} disabled={resending}>
+                        {resending && <span className="spinner" />}
+                        Resend the link
+                    </button>
+                    <button className="btn btn-quiet" onClick={() => setSentTo("")}>
+                        Use a different email
+                    </button>
+                </div>
+            </AuthLayout>
+        );
+    }
+
+    return (
+        <AuthLayout
+            title="Create your account"
+            subtitle="Free forever. Solve in JavaScript, Python, C++ or Java."
+            footer={
+                <>
+                    Already have an account? <Link to="/login">Log in</Link>
+                </>
+            }
+        >
+            {error && (
+                <div className="notice error" role="alert">
+                    {error}
+                </div>
+            )}
+
+            <form className="auth-form" onSubmit={handleSubmit}>
+                <div className="field">
+                    <label htmlFor="reg-email">Email</label>
+                    <input
+                        id="reg-email"
+                        type="email"
+                        autoComplete="email"
+                        required
+                        autoFocus
+                        value={form.email}
+                        onChange={(e) => set("email")(e.target.value)}
+                        placeholder="you@example.com"
+                    />
+                </div>
+
+                <div className="field">
+                    <label htmlFor="reg-username">
+                        Username <span className="field-hint">shown on the leaderboard</span>
+                    </label>
+                    <input
+                        id="reg-username"
+                        autoComplete="username"
+                        required
+                        maxLength={40}
+                        value={form.username}
+                        onChange={(e) => set("username")(e.target.value)}
+                        placeholder="ada_lovelace"
+                    />
+                </div>
+
+                <div>
+                    <PasswordField
+                        label="Password"
+                        value={form.password}
+                        onChange={set("password")}
+                        autoComplete="new-password"
+                        hint="At least 8 characters, with a letter and a number."
+                    />
+                    <PasswordStrength password={form.password} />
+                </div>
+
+                <PasswordField
+                    label="Confirm password"
+                    value={form.confirm}
+                    onChange={set("confirm")}
+                    autoComplete="new-password"
+                    invalid={mismatch}
+                    hint={mismatch ? "Passwords don't match yet." : undefined}
+                />
+
+                <button className="btn btn-primary btn-block btn-lg" disabled={loading}>
+                    {loading ? (
+                        <>
+                            <span className="spinner" /> Creating account
+                        </>
+                    ) : (
+                        "Create account"
+                    )}
+                </button>
+            </form>
+        </AuthLayout>
     );
 }
 

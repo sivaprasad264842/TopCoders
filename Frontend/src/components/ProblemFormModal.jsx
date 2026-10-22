@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { createProblem, getErrorMessage, getProblemById, getToken, updateProblem } from "../api";
-import "../CSS/Problem.css";
+import { useFeedback } from "../ui/Feedback";
+import Icon from "../ui/Icon";
+import Segmented from "../ui/Segmented";
+import TagInput from "../ui/TagInput";
+import "../styles/forms.css";
 
 const emptyCase = () => ({ input: "", output: "", hidden: false });
 const defaultHints = () => [
@@ -15,12 +19,15 @@ const defaultHints = () => [
  */
 function ProblemFormModal({ problemId, close, refresh }) {
     const isEdit = Boolean(problemId);
+    const { toast } = useFeedback();
     const [form, setForm] = useState({
         title: "",
         statement: "",
         difficulty: "Easy",
         testCases: [emptyCase()],
         hints: defaultHints(),
+        tags: [],
+        editorial: "",
     });
     const [loadingProblem, setLoadingProblem] = useState(isEdit);
     const [saving, setSaving] = useState(false);
@@ -45,6 +52,8 @@ function ProblemFormModal({ problemId, close, refresh }) {
                           }))
                         : [emptyCase()],
                     hints: data.hints?.length ? data.hints : defaultHints(),
+                    tags: data.tags || [],
+                    editorial: data.editorial || "",
                 });
             })
             .catch((err) => !cancelled && setError(getErrorMessage(err, "Could not load the problem.")))
@@ -98,12 +107,15 @@ function ProblemFormModal({ problemId, close, refresh }) {
             difficulty: form.difficulty,
             testCases: form.testCases,
             hints: form.hints.filter((hint) => hint.body.trim()),
+            tags: form.tags,
+            editorial: form.editorial.trim(),
         };
 
         try {
             setSaving(true);
             if (isEdit) await updateProblem(problemId, payload);
             else await createProblem(payload);
+            toast(isEdit ? "Changes saved" : "Problem published");
             refresh();
             close();
         } catch (err) {
@@ -114,143 +126,185 @@ function ProblemFormModal({ problemId, close, refresh }) {
     };
 
     return (
-        <div className="modal" onClick={(e) => e.target === e.currentTarget && close()}>
-            <form className="modal-content problem-form" onSubmit={handleSubmit}>
-                <div className="modal-head">
-                    <div>
-                        <p className="eyebrow">Problem Builder</p>
-                        <h2>{isEdit ? "Edit Problem" : "Create Problem"}</h2>
-                    </div>
-                    <button type="button" className="drawer-close" onClick={close} aria-label="Close">
-                        x
+        <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+            <form className="sheet" onSubmit={handleSubmit} aria-labelledby="problem-form-title">
+                <div className="sheet-head">
+                    <h2 id="problem-form-title">{isEdit ? "Edit problem" : "New problem"}</h2>
+                    <button type="button" className="icon-btn" onClick={close} aria-label="Close">
+                        <Icon name="x" />
                     </button>
                 </div>
 
-                {error && <div className="form-error">{error}</div>}
+                <div className="sheet-body">
+                    {error && <div className="notice error">{error}</div>}
 
-                {loadingProblem ? (
-                    <div className="empty-state">Loading problem...</div>
-                ) : (
-                    <>
-                        <label>
-                            Title
-                            <input
-                                placeholder="Two Sum"
-                                value={form.title}
-                                maxLength={150}
-                                onChange={(e) => setField("title", e.target.value)}
-                            />
-                        </label>
-
-                        <label>
-                            Difficulty
-                            <select value={form.difficulty} onChange={(e) => setField("difficulty", e.target.value)}>
-                                <option value="Easy">Easy</option>
-                                <option value="Medium">Medium</option>
-                                <option value="Hard">Hard</option>
-                            </select>
-                        </label>
-
-                        <label>
-                            Statement
-                            <textarea
-                                placeholder="Describe the task, input format, output format, and constraints."
-                                value={form.statement}
-                                onChange={(e) => setField("statement", e.target.value)}
-                            />
-                        </label>
-
-                        <div className="testcase-form-head">
-                            <h3>Test Cases</h3>
-                            <button type="button" onClick={() => addItem("testCases", emptyCase())}>
-                                Add Case
-                            </button>
-                        </div>
-                        <p className="form-help">
-                            Visible cases are shown as examples. Hidden cases are only used for judging, so
-                            solutions can't be hard-coded.
-                        </p>
-
-                        <div className="testcase-form-list">
-                            {form.testCases.map((tc, index) => (
-                                <div className="testcase-editor" key={index}>
-                                    <div className="case-title">
-                                        <strong>Case {index + 1}</strong>
-                                        <label className="hidden-toggle">
-                                            <input
-                                                type="checkbox"
-                                                checked={tc.hidden}
-                                                onChange={(e) =>
-                                                    updateItem("testCases", index, "hidden", e.target.checked)
-                                                }
-                                            />
-                                            Hidden
-                                        </label>
-                                        <button
-                                            type="button"
-                                            onClick={() => removeItem("testCases", index, true)}
-                                            disabled={form.testCases.length === 1}
-                                        >
-                                            Remove
-                                        </button>
-                                    </div>
-                                    <textarea
-                                        placeholder="Input (can be empty)"
-                                        value={tc.input}
-                                        onChange={(e) => updateItem("testCases", index, "input", e.target.value)}
-                                    />
-                                    <textarea
-                                        placeholder="Expected output"
-                                        value={tc.output}
-                                        onChange={(e) => updateItem("testCases", index, "output", e.target.value)}
-                                    />
-                                </div>
-                            ))}
-                        </div>
-
-                        <div className="testcase-form-head">
-                            <h3>Hints</h3>
-                            <button
-                                type="button"
-                                onClick={() =>
-                                    addItem("hints", { title: `Hint ${form.hints.length + 1}`, body: "" })
-                                }
-                            >
-                                Add Hint
-                            </button>
-                        </div>
-
-                        <div className="testcase-form-list">
-                            {form.hints.map((hint, index) => (
-                                <div className="testcase-editor" key={index}>
-                                    <div className="case-title">
-                                        <strong>{hint.title || `Hint ${index + 1}`}</strong>
-                                        <button type="button" onClick={() => removeItem("hints", index)}>
-                                            Remove
-                                        </button>
-                                    </div>
+                    {loadingProblem ? (
+                        <div className="skeleton" style={{ height: 240 }} />
+                    ) : (
+                        <>
+                            <div className="form-grid">
+                                <label className="field">
+                                    Title
                                     <input
-                                        placeholder={`Hint ${index + 1}`}
-                                        value={hint.title}
-                                        onChange={(e) => updateItem("hints", index, "title", e.target.value)}
+                                        placeholder="Two Sum"
+                                        value={form.title}
+                                        maxLength={150}
+                                        onChange={(e) => setField("title", e.target.value)}
+                                        autoFocus
                                     />
-                                    <textarea
-                                        placeholder="Small nudge without giving away the full solution"
-                                        value={hint.body}
-                                        onChange={(e) => updateItem("hints", index, "body", e.target.value)}
+                                </label>
+                                <div className="field">
+                                    Difficulty
+                                    <Segmented
+                                        options={[
+                                            { value: "Easy", label: "Easy" },
+                                            { value: "Medium", label: "Medium" },
+                                            { value: "Hard", label: "Hard" },
+                                        ]}
+                                        value={form.difficulty}
+                                        onChange={(v) => setField("difficulty", v)}
+                                        label="Difficulty"
                                     />
                                 </div>
-                            ))}
-                        </div>
-                    </>
-                )}
+                            </div>
 
-                <div className="modal-actions">
-                    <button type="button" className="secondary-btn" onClick={close}>
+                            <div className="field">
+                                Topics <span className="field-hint">up to 8, shown in the problem list and used for filters</span>
+                                <TagInput value={form.tags} onChange={(tags) => setField("tags", tags)} />
+                            </div>
+
+                            <label className="field">
+                                Statement
+                                <textarea
+                                    className="statement-input"
+                                    placeholder="Describe the task, input format, output format and constraints."
+                                    value={form.statement}
+                                    onChange={(e) => setField("statement", e.target.value)}
+                                />
+                            </label>
+
+                            <section className="form-section">
+                                <div className="form-section-head">
+                                    <div>
+                                        <h3>Test cases</h3>
+                                        <p>
+                                            Visible cases appear as examples. Hidden cases are only used for judging, so
+                                            solutions can't be hard-coded.
+                                        </p>
+                                    </div>
+                                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => addItem("testCases", emptyCase())}>
+                                        <Icon name="plus" size={14} /> Add case
+                                    </button>
+                                </div>
+
+                                {form.testCases.map((tc, index) => (
+                                    <div className={`case-editor ${tc.hidden ? "is-hidden" : ""}`} key={index}>
+                                        <div className="case-editor-head">
+                                            <strong>Case {index + 1}</strong>
+                                            <label className="switch">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={tc.hidden}
+                                                    onChange={(e) => updateItem("testCases", index, "hidden", e.target.checked)}
+                                                />
+                                                Hidden
+                                            </label>
+                                            <button
+                                                type="button"
+                                                className="icon-btn"
+                                                onClick={() => removeItem("testCases", index, true)}
+                                                disabled={form.testCases.length === 1}
+                                                aria-label={`Remove case ${index + 1}`}
+                                            >
+                                                <Icon name="trash" />
+                                            </button>
+                                        </div>
+                                        <div className="case-io">
+                                            <textarea
+                                                placeholder="Input (can be empty)"
+                                                value={tc.input}
+                                                onChange={(e) => updateItem("testCases", index, "input", e.target.value)}
+                                            />
+                                            <textarea
+                                                placeholder="Expected output"
+                                                value={tc.output}
+                                                onChange={(e) => updateItem("testCases", index, "output", e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
+                            </section>
+
+                            <section className="form-section">
+                                <div className="form-section-head">
+                                    <div>
+                                        <h3>Editorial</h3>
+                                        <p>Optional. Explain the intended approach and its complexity. Solvers see it in the Editorial tab.</p>
+                                    </div>
+                                </div>
+                                <textarea
+                                    className="input editorial-input"
+                                    placeholder="Approach, step by step, then time and space complexity."
+                                    value={form.editorial}
+                                    maxLength={20000}
+                                    onChange={(e) => setField("editorial", e.target.value)}
+                                />
+                            </section>
+
+                            <section className="form-section">
+                                <div className="form-section-head">
+                                    <div>
+                                        <h3>Hints</h3>
+                                        <p>Small nudges people can open one at a time. Empty hints are skipped.</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost btn-sm"
+                                        onClick={() => addItem("hints", { title: `Hint ${form.hints.length + 1}`, body: "" })}
+                                    >
+                                        <Icon name="plus" size={14} /> Add hint
+                                    </button>
+                                </div>
+
+                                {form.hints.map((hint, index) => (
+                                    <div className="case-editor" key={index}>
+                                        <div className="case-editor-head">
+                                            <input
+                                                className="input hint-title"
+                                                placeholder={`Hint ${index + 1}`}
+                                                value={hint.title}
+                                                onChange={(e) => updateItem("hints", index, "title", e.target.value)}
+                                                aria-label={`Hint ${index + 1} title`}
+                                            />
+                                            <button
+                                                type="button"
+                                                className="icon-btn"
+                                                onClick={() => removeItem("hints", index)}
+                                                aria-label={`Remove hint ${index + 1}`}
+                                            >
+                                                <Icon name="trash" />
+                                            </button>
+                                        </div>
+                                        <textarea
+                                            className="input"
+                                            placeholder="A nudge that doesn't give away the full solution"
+                                            value={hint.body}
+                                            onChange={(e) => updateItem("hints", index, "body", e.target.value)}
+                                        />
+                                    </div>
+                                ))}
+                            </section>
+                        </>
+                    )}
+                </div>
+
+                <div className="sheet-foot">
+                    <button type="button" className="btn btn-quiet" onClick={close}>
                         Cancel
                     </button>
-                    <button type="submit" className="primary-btn" disabled={saving || loadingProblem}>
-                        {saving ? "Saving..." : isEdit ? "Update" : "Create"}
+                    <button type="submit" className="btn btn-primary" disabled={saving || loadingProblem}>
+                        {saving && <span className="spinner" />}
+                        {isEdit ? "Save changes" : "Publish problem"}
                     </button>
                 </div>
             </form>

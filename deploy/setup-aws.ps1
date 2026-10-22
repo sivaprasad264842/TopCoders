@@ -95,13 +95,22 @@ Write-Ok "policies topcoders-backend-task-role: run/stop runner tasks in '$Clust
 
 # ── 2. Logs ──────────────────────────────────────────────────────────────────
 Write-Step "CloudWatch log group"
-$logGroup = Invoke-Aws logs describe-log-groups --log-group-name-prefix "/ecs/topcoders" `
-    --query "logGroups[?logGroupName=='/ecs/topcoders'].logGroupName | [0]" --output text
-if (Test-Empty $logGroup) {
-    Invoke-Aws logs create-log-group --log-group-name "/ecs/topcoders" | Out-Null
+# Create directly instead of describe-then-create: some AWS Organizations
+# block logs:DescribeLogGroups with an SCP. "Already exists" is fine.
+$out = & aws logs create-log-group --log-group-name "/ecs/topcoders" 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0 -and $out -notmatch "ResourceAlreadyExists") {
+    if ($out -match "service\s+control\s+policy") {
+        Fail ("An AWS Organizations SCP blocks CloudWatch Logs in this account. ECS tasks need " +
+              "logs:CreateLogGroup/CreateLogStream/PutLogEvents. Ask the org admin to allow them.`n$out")
+    }
+    Fail "Could not create log group /ecs/topcoders: $out"
 }
-Invoke-Aws logs put-retention-policy --log-group-name "/ecs/topcoders" --retention-in-days 14 | Out-Null
-Write-Ok "/ecs/topcoders (14-day retention)"
+$out = & aws logs put-retention-policy --log-group-name "/ecs/topcoders" --retention-in-days 14 2>&1 | Out-String
+if ($LASTEXITCODE -eq 0) {
+    Write-Ok "/ecs/topcoders (14-day retention)"
+} else {
+    Write-Host "    WARNING: could not set retention on /ecs/topcoders (logs kept forever): $out" -ForegroundColor Yellow
+}
 
 # ── 3. ECR ───────────────────────────────────────────────────────────────────
 Write-Step "ECR repository"
@@ -235,10 +244,10 @@ Write-Host ""
 Write-Host "Setup complete. Saved $ConfigPath" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "  1. Store secrets:   .\deploy\create-ssm-parameters.ps1 -AwsProfile $AwsProfile -MongoUri '...' -ResendApiKey '...'"
+Write-Host "  1. Store secrets:   .\deploy\create-ssm-parameters.ps1 -AwsProfile $AwsProfile -Region $Region -MongoUri '...' -ResendApiKey '...'"
 Write-Host "  2. Deploy:          .\deploy\deploy.ps1"
 Write-Host "  3. DNS (GoDaddy):   CNAME  api  ->  $AlbDns"
 if (-not $CertificateArn) {
-    Write-Host "  4. HTTPS:           request an ACM certificate for api.topcoders.online, then re-run:"
-    Write-Host "                      .\deploy\setup-aws.ps1 -AwsProfile $AwsProfile -CertificateArn <arn>"
+    Write-Host "  4. HTTPS:           request an ACM certificate (region $Region) for api.topcoders.online, then re-run:"
+    Write-Host "                      .\deploy\setup-aws.ps1 -AwsProfile $AwsProfile -Region $Region -CertificateArn <arn>"
 }

@@ -27,6 +27,12 @@ const problemSchema = new mongoose.Schema({
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
     testCases: { type: [testCaseSchema], default: [] },
     hints: { type: [hintSchema], default: [] },
+    tags: { type: [String], default: [], index: true },
+    // Optional write-up of the intended solution, shown in the Editorial tab.
+    editorial: { type: String, default: "", maxlength: 20_000 },
+    // Hackathon problems stay hidden from the public list until the event ends.
+    hackathon: { type: mongoose.Schema.Types.ObjectId, ref: "Hackathon", default: null },
+    hiddenUntil: { type: Date, default: null },
     createdAt: { type: Date, default: Date.now, index: true },
 });
 
